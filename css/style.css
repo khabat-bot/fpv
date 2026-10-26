@@ -1,0 +1,434 @@
+/* =========================================================================
+   FPV Sim — stylesheet
+   Everything is sized in relative units so it works on phones and desktops.
+
+   Mobile hardening notes:
+     * touch-action: none on html/body disables every browser gesture
+       (pinch-zoom, double-tap-zoom, rubber-band scroll) at the root.
+     * position: fixed + inset: 0 on body prevents any scroll entirely.
+     * -webkit-user-select / -webkit-touch-callout kill text selection
+       and long-press callouts.
+     * buttons get touch-action: manipulation so taps stay instant.
+   ========================================================================= */
+
+:root {
+  --osd:        #cfe9ff;
+  --osd-dim:    rgba(207, 233, 255, 0.55);
+  --accent:     #6ef2a0;
+  --btn-bg:     rgba(10, 22, 34, 0.45);
+  --btn-border: rgba(140, 200, 255, 0.35);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  overflow: hidden;
+  background: #000;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+
+body {
+  position: fixed;
+  inset: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  color: var(--osd);
+}
+
+/* ------------------------------ viewport ------------------------------ */
+#scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* ------------------------------ HUD root ------------------------------ */
+#hud {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* ----------------------------- crosshair ------------------------------ */
+#crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+}
+#crosshair::before,
+#crosshair::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  height: 8px;
+  margin-left: -1px;
+  background: rgba(110, 242, 160, 0.85);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+}
+#crosshair::before { top: 0; }
+#crosshair::after  { bottom: 0; }
+#crosshair span {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: rgba(110, 242, 160, 0.95);
+  box-shadow: 0 0 5px rgba(0, 0, 0, 0.9);
+}
+
+/* ------------------------------- OSD ---------------------------------- */
+.osd {
+  position: absolute;
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.95),
+               0 0 2px rgba(0, 0, 0, 0.95),
+               1px 1px 0 rgba(0, 0, 0, 0.8);
+}
+.osd .row { display: flex; gap: 6px; align-items: baseline; }
+.osd .lbl { color: var(--osd-dim); width: 36px; flex: none; }
+.osd .val { color: var(--osd); }
+.osd .dim { color: var(--osd-dim); }
+
+.osd-tl {
+  top: calc(10px + env(safe-area-inset-top));
+  left: calc(12px + env(safe-area-inset-left));
+}
+.osd-bc {
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+
+/* throttle bar */
+.thr-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.thr-bar {
+  width: 128px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(160, 210, 255, 0.25);
+  overflow: hidden;
+}
+.thr-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #2e9bff, #6ef2a0);
+  transition: width 0.06s linear;
+}
+.thr-txt { font-size: 11px; color: var(--osd); }
+
+/* low-battery flash */
+@keyframes volt-flash {
+  0%, 100% { color: #ffb0b0; }
+  50%      { color: #ff3a3a;
+             text-shadow: 0 0 10px #ff0000, 0 0 2px #ff0000; }
+}
+.volt-low { animation: volt-flash 0.9s ease-in-out infinite; }
+
+/* ------------------------------ buttons ------------------------------- */
+#buttons {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+}
+.btn {
+  pointer-events: auto;
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.10em;
+  padding: 10px 14px;
+  min-width: 84px;
+  color: var(--osd);
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  border-radius: 9px;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  transition: background 0.12s, border-color 0.12s;
+}
+.btn:active { background: rgba(60, 120, 180, 0.5); }
+.btn.on {
+  background: rgba(40, 200, 110, 0.30);
+  border-color: rgba(110, 242, 160, 0.9);
+  color: #b6ffd0;
+}
+.btn.off {
+  background: rgba(120, 40, 40, 0.30);
+  border-color: rgba(255, 130, 130, 0.6);
+  color: #ffb8b8;
+}
+.btn.tiny { font-size: 10px; padding: 7px 10px; min-width: 84px; }
+.btn.big  { font-size: 16px; padding: 14px 30px; }
+
+/* ----------------------------- joysticks ------------------------------ */
+.stick {
+  position: fixed;
+  z-index: 20;
+  width: min(38vw, 168px);
+  height: min(38vw, 168px);
+  border-radius: 50%;
+  border: 2px solid rgba(160, 210, 255, 0.22);
+  background:
+    radial-gradient(circle at 50% 50%,
+      rgba(120, 180, 255, 0.10) 0%,
+      rgba(120, 180, 255, 0.03) 68%,
+      rgba(120, 180, 255, 0.09) 100%);
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#stick-left {
+  left: calc(16px + env(safe-area-inset-left));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+}
+#stick-right {
+  right: calc(16px + env(safe-area-inset-right));
+  bottom: calc(16px + env(safe-area-inset-bottom));
+}
+
+/* deadzone indicator */
+.stick::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18%;
+  height: 18%;
+  margin: -9% 0 0 -9%;
+  border-radius: 50%;
+  border: 1px dashed rgba(160, 210, 255, 0.18);
+  pointer-events: none;
+}
+
+.stick-label {
+  position: absolute;
+  left: 50%;
+  top: -19px;
+  transform: translateX(-50%);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: rgba(160, 210, 255, 0.45);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40%;
+  height: 40%;
+  margin: -20% 0 0 -20%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%,
+      rgba(255, 255, 255, 0.90) 0%,
+      rgba(140, 200, 255, 0.45) 55%,
+      rgba(80, 140, 220, 0.35) 100%);
+  box-shadow: 0 0 14px rgba(110, 190, 255, 0.45),
+              inset 0 0 8px rgba(255, 255, 255, 0.35);
+  will-change: transform;
+  pointer-events: none;
+}
+
+/* --------------------------- crash overlay ---------------------------- */
+#crash {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  background: rgba(24, 0, 0, 0.45);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  touch-action: none;
+}
+#crash.hidden { display: none; }
+.crash-title {
+  font-size: clamp(22px, 6vw, 34px);
+  letter-spacing: 0.22em;
+  color: #ff6a6a;
+  text-shadow: 0 0 20px rgba(255, 60, 60, 0.65);
+}
+.crash-sub {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 200, 200, 0.70);
+}
+
+/* ------------------------------- help --------------------------------- */
+#help {
+  position: fixed;
+  left: 50%;
+  top: 27%;
+  transform: translateX(-50%);
+  z-index: 25;
+  font-size: 10px;
+  line-height: 1.7;
+  text-align: center;
+  color: rgba(200, 225, 255, 0.78);
+  background: rgba(0, 10, 20, 0.55);
+  border: 1px solid rgba(120, 180, 255, 0.20);
+  border-radius: 9px;
+  padding: 9px 16px;
+  max-width: 92vw;
+  pointer-events: none;
+  transition: opacity 0.7s ease;
+}
+#help.fade { opacity: 0; }
+#help .close {
+  position: absolute;
+  top: 2px;
+  right: 7px;
+  cursor: pointer;
+  opacity: 0.55;
+  pointer-events: auto;
+  padding: 4px 8px;
+  touch-action: manipulation;
+}
+
+/* ------------------------- small screens tweak ------------------------ */
+@media (max-height: 420px) {
+  .osd { font-size: 11px; line-height: 1.45; }
+  .stick { width: min(34vw, 140px); height: min(34vw, 140px); }
+}
+
+/* --------------------------- FPS counter ------------------------------ */
+#fps-counter {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-family: inherit;
+  color: #8effa0;
+  background: rgba(0, 10, 20, 0.60);
+  border: 1px solid rgba(120, 180, 255, 0.25);
+  border-radius: 6px;
+  padding: 4px 10px;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.95);
+  pointer-events: none;
+  white-space: nowrap;
+  transition: color 0.2s, border-color 0.2s;
+}
+#fps-counter.warn {
+  color: #ffd060;
+  border-color: rgba(255, 200, 80, 0.4);
+}
+#fps-counter.bad {
+  color: #ff8080;
+  border-color: rgba(255, 130, 130, 0.5);
+}
+
+/* --------------------------- lap timer -------------------------------- */
+#lap-timer {
+  position: fixed;
+  top: calc(42px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  font-family: inherit;
+  color: #ffe080;
+  background: rgba(0, 10, 20, 0.55);
+  border: 1px solid rgba(255, 220, 100, 0.25);
+  border-radius: 6px;
+  padding: 4px 14px;
+  text-align: center;
+  line-height: 1.4;
+  pointer-events: none;
+  white-space: nowrap;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+  transition: opacity 0.2s;
+}
+#lap-timer .lt-state {
+  font-size: 10px;
+  opacity: 0.85;
+  letter-spacing: 0.14em;
+}
+#lap-timer .lt-time {
+  font-size: 16px;
+  color: #fff;
+}
+#lap-timer .lt-best {
+  font-size: 10px;
+  color: #b6ffd0;
+  opacity: 0.85;
+}
+
+/* --------------------------- vignette --------------------------------- */
+#vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 42%,
+    rgba(0, 0, 0, 0.30) 100%);
+  transition: opacity 0.3s;
+}
+body.gfx-low #vignette { opacity: 0; }
+
+/* ------------------------ compact button grid ------------------------- */
+#buttons {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  max-width: 210px;
+}
+#buttons .btn {
+  padding: 8px 10px;
+  font-size: 11px;
+  min-width: 0;
+}
+#buttons .btn.tiny {
+  padding: 7px 8px;
+  font-size: 9px;
+  min-width: 0;
+}
