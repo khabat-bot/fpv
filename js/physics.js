@@ -179,7 +179,282 @@ window.Drone = (function () {
       CFG.battery.cells * restCell - this._smoothCurrent * Rpack);
   };
 
-  Drone.prototype._collide = function () {
+  Drone.prototype._ensureBVH = function() {
+  if (this._bvhFailed) return;
+  if (this._bvhBuilding) return;
+  if (typeof THREE === 'undefined') return;
+
+  var hasExt = (typeof THREE.BufferGeometry.prototype.computeBoundsTree === 'function');
+  var hasLib = (typeof window !== 'undefined'
+                && window.MeshBVHLib
+                && typeof window.MeshBVHLib.MeshBVH === 'function');
+
+  if (!hasExt && !hasLib) {
+    if (typeof window !== 'undefined' && !window.__bvhScriptRequested) {
+      window.__bvhScriptRequested = true;
+      var s = document.createElement('script');
+      s.src = 'js/three-mesh-bvh.umd.js';
+      s.onload = function() {
+        console.log('[BVH] three-mesh-bvh.umd.js loaded dynamically');
+        if (window.__drone) window.__drone._bvhFailed = false;
+      };
+      s.onerror = function() {
+        console.warn('[BVH] failed to load three-mesh-bvh.umd.js');
+        if (window.__drone) window.__drone._bvhFailed = true;
+      };
+      document.head.appendChild(s);
+      console.log('[BVH] injected three-mesh-bvh.umd.js (dynamic)');
+    }
+    return;
+  }
+
+  if (!hasExt && hasLib) {
+    var lib = window.MeshBVHLib;
+    if (typeof lib.computeBoundsTree === 'function') {
+      THREE.BufferGeometry.prototype.computeBoundsTree = lib.computeBoundsTree;
+      if (typeof lib.disposeBoundsTree === 'function') {
+        THREE.BufferGeometry.prototype.disposeBoundsTree = lib.disposeBoundsTree;
+      }
+    } else {
+      this._bvhFailed = true;
+      console.warn('[BVH] library loaded but computeBoundsTree not exported');
+      return;
+    }
+  }
+
+  var cols = this.colliders || (window.__world && window.__world.colliders) || null;
+  if (!cols || cols.length === 0) return;
+
+  // Only imported maps get a BVH. Procedural world keeps its accurate
+  // cylinder/box colliders + getFloorY snap in the original AABB path.
+  var BVH_MIN_COLLIDERS = 500;
+  if (cols.length < BVH_MIN_COLLIDERS) return;
+
+  var colSrc = (this.colliders === cols) ? 'drone' : 'world';
+
+  // Already built with the current collider count → nothing to do
+  if (this.collisionBVH && this._bvhColliderCount === cols.length) return;
+
+  // Colliders changed since last build (map imported) → dispose + rebuild
+  if (this.collisionBVH) {
+    console.log('[BVH] colliders changed:', this._bvhColliderCount, '->', cols.length, '- rebuilding');
+    if (this.collisionGeom) {
+      if (typeof this.collisionGeom.disposeBoundsTree === 'function') {
+        this.collisionGeom.disposeBoundsTree();
+      }
+      this.collisionGeom.dispose();
+    }
+    this.collisionGeom = null;
+    this.collisionBVH = null;
+    this._bvhLogCount = 0;
+  }
+
+  var scene = (window.__scene) || this.scene || null;
+  if (!scene) { console.warn('[BVH] no scene reference'); return; }
+
+  this._bvhBuilding = true;
+  try {
+    var meshes = [];
+    scene.traverse(function(obj) {
+      if (!obj.isMesh || !obj.geometry) return;
+      if (!obj.geometry.attributes || !obj.geometry.attributes.position) return;
+      var name = obj.name || '';
+      if (/drone|sky|camera|helper|marker|trigger|spawn/i.test(name)) return;
+      if (obj.geometry.boundingBox === null) obj.geometry.computeBoundingBox();
+      var bb = obj.geometry.boundingBox;
+      if (!bb) return;
+      var sx = bb.max.x - bb.min.x, sy = bb.max.y - bb.min.y, sz = bb.max.z - bb.min.z;
+      if (sx > 2000 || sy > 2000 || sz > 2000) return;
+      meshes.push(obj);
+    });
+
+    if (meshes.length === 0) {
+      console.warn('[BVH] no candidate meshes');
+      return;
+    }
+
+    var totalVerts = 0, totalIndices = 0;
+    for (var mi = 0; mi < meshes.length; mi++) {
+      var g = meshes[mi].geometry;
+      totalVerts += g.attributes.position.count;
+      totalIndices += g.index ? g.index.count : g.attributes.position.count;
+    }
+
+    var positions = new Float32Array(totalVerts * 3);
+    var indices = new Uint32Array(totalIndices);
+    var vOff = 0, iOff = 0;
+    var tmp = new THREE.Vector3();
+
+    for (var mj = 0; mj < meshes.length; mj++) {
+      var mesh = meshes[mj];
+      mesh.updateWorldMatrix(true, false);
+      var mtx = mesh.matrixWorld;
+      var pos = mesh.geometry.attributes.position;
+      for (var i = 0; i < pos.count; i++) {
+        tmp.fromBufferAttribute(pos, i).applyMatrix4(mtx);
+        positions[(vOff + i) * 3]     = tmp.x;
+        positions[(vOff + i) * 3 + 1] = tmp.y;
+        positions[(vOff + i) * 3 + 2] = tmp.z;
+      }
+      var idx = mesh.geometry.index;
+      if (idx) {
+        for (var k = 0; k < idx.count; k++) indices[iOff + k] = idx.getX(k) + vOff;
+        iOff += idx.count;
+      } else {
+        for (var k2 = 0; k2 < pos.count; k2++) indices[iOff + k2] = vOff + k2;
+        iOff += pos.count;
+      }
+      vOff += pos.count;
+    }
+
+    var geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geom.setIndex(new THREE.BufferAttribute(indices, 1));
+
+    var t0 = performance.now();
+    geom.computeBoundsTree();
+    var dt = (performance.now() - t0).toFixed(0);
+
+    geom.computeBoundingBox();
+    var _bb = geom.boundingBox;
+
+    this.collisionGeom = geom;
+    this.collisionBVH = geom.boundsTree;
+    this._bvhColliderCount = cols.length;
+    window.__bvh = this.collisionBVH;
+
+    console.log('[BVH] built:', meshes.length, 'meshes,', (totalIndices / 3 | 0), 'tris in', dt + 'ms');
+    console.log('[BVH] colliders:', cols.length, 'from', colSrc);
+    if (_bb) {
+      console.log('[BVH] bounds:',
+        _bb.min.x.toFixed(1), _bb.min.y.toFixed(1), _bb.min.z.toFixed(1), '..',
+        _bb.max.x.toFixed(1), _bb.max.y.toFixed(1), _bb.max.z.toFixed(1));
+    }
+    console.log('[BVH] drone local:',
+      this.position.x.toFixed(1), this.position.y.toFixed(1), this.position.z.toFixed(1));
+    if (typeof this.getWorldPosition === 'function') {
+      var _wp = new THREE.Vector3();
+      this.getWorldPosition(_wp);
+      console.log('[BVH] drone world:', _wp.x.toFixed(1), _wp.y.toFixed(1), _wp.z.toFixed(1));
+    }
+  } catch (e) {
+    this._bvhFailed = true;
+    console.warn('[BVH] build failed:', e && e.message);
+  } finally {
+    this._bvhBuilding = false;
+  }
+};
+
+Drone.prototype._collideBVH = function() {
+  var bvh = this.collisionBVH;
+  if (!bvh) return;
+
+  if (!this._bvhSphere) {
+    this._bvhSphere   = new THREE.Sphere();
+    this._bvhClosest  = new THREE.Vector3();
+    this._bvhNormal   = new THREE.Vector3();
+    this._bvhWorldPos = new THREE.Vector3();
+    this._bvhLogCount = 0;
+  }
+  var sphere   = this._bvhSphere;
+  var closest  = this._bvhClosest;
+  var normal   = this._bvhNormal;
+  var worldPos = this._bvhWorldPos;
+
+  // Query in WORLD space to match the baked BVH geometry.
+  if (typeof this.getWorldPosition === 'function') {
+    this.getWorldPosition(worldPos);
+  } else {
+    worldPos.copy(this.position);
+  }
+
+  sphere.center.copy(worldPos);
+  sphere.radius = 0.22;
+
+  var hit = false;
+
+  bvh.shapecast({
+    intersectsBounds: function(box) {
+      var cx = Math.max(box.min.x, Math.min(sphere.center.x, box.max.x));
+      var cy = Math.max(box.min.y, Math.min(sphere.center.y, box.max.y));
+      var cz = Math.max(box.min.z, Math.min(sphere.center.z, box.max.z));
+      var dx = cx - sphere.center.x, dy = cy - sphere.center.y, dz = cz - sphere.center.z;
+      return (dx*dx + dy*dy + dz*dz) <= sphere.radius * sphere.radius;
+    },
+    intersectsTriangle: function(tri) {
+      if (typeof tri.closestPointToPoint === 'function') {
+        tri.closestPointToPoint(sphere.center, closest);
+        var d2 = closest.distanceToSquared(sphere.center);
+        if (d2 < sphere.radius * sphere.radius) {
+          hit = true;
+          return true;
+        }
+      }
+      return false;
+    }
+  });
+
+  if (this._bvhLogCount < 3) {
+    console.log('[BVH collide]', hit ? 'HIT' : 'miss',
+      'world:', worldPos.x.toFixed(2), worldPos.y.toFixed(2), worldPos.z.toFixed(2),
+      'local:', this.position.x.toFixed(2), this.position.y.toFixed(2), this.position.z.toFixed(2),
+      hit ? ('closest: ' + closest.x.toFixed(2) + ',' + closest.y.toFixed(2) + ',' + closest.z.toFixed(2)) : '');
+    this._bvhLogCount++;
+  }
+
+  if (!hit) return;
+
+  // Depenetrate: closest lies on the overlapping triangle surface.
+  normal.copy(sphere.center).sub(closest);
+  var dist = normal.length();
+  if (dist < 1e-5) {
+    normal.set(0, 1, 0);
+    dist = 0.001;
+  } else {
+    normal.divideScalar(dist);
+  }
+  var depth = sphere.radius - dist;
+
+  // Push out (in world delta, applied to local position — safe if parent
+  // has no rotation/scale, which is the standard drone-in-scene setup).
+  this.position.addScaledVector(normal, depth + 0.001);
+
+  var vel = this.velocity || this.vel;
+  if (vel) {
+    var vn = vel.x * normal.x + vel.y * normal.y + vel.z * normal.z;
+    if (vn < 0) {
+      vel.x -= normal.x * vn;
+      vel.y -= normal.y * vn;
+      vel.z -= normal.z * vn;
+      if (this.armed) {
+        var impact = -vn;
+        var cfg = (window.CONFIG) || (typeof CONFIG !== 'undefined' ? CONFIG : {}) || {};
+        var crashSpd = cfg.crashSpeed || 7.0;
+        var hitSpd   = cfg.hitSpeed   || 6.0;
+        if ((normal.y > 0.6 && impact > crashSpd) || impact > hitSpd) {
+          if (typeof this._crash === 'function') this._crash();
+          else if (typeof this.crash === 'function') this.crash();
+        }
+      }
+    }
+  }
+};
+
+Drone.prototype._collide = function() {
+  this._ensureBVH();
+  if (this.collisionBVH) {
+    // Respawn if far below world
+    if (this.position.y < -50 && this.armed) {
+      if (typeof this._respawn === 'function') this._respawn();
+      else if (typeof this.respawn === 'function') this.respawn();
+      else if (typeof this.reset === 'function') this.reset();
+      return;
+    }
+    // BVH triangles are the sole source of truth (mesh ground included)
+    this._collideBVH();
+    return;
+  }
+
     const floor = this.getFloorY(this.position.x, this.position.z);
 
     if (this.position.y < floor) {
