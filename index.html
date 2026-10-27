@@ -82,14 +82,28 @@
       <span>SETTINGS</span>
       <span class="sp-close" id="sp-close">&#x2715;</span>
     </div>
-    <div class="sp-section">
-      <div class="sp-title">RENDERING</div>
+    <div class="sp-tabs">
+      <button class="sp-tab active" data-tab="GENERAL">GENERAL</button>
+      <button class="sp-tab" data-tab="CAMERA">CAMERA</button>
+      <button class="sp-tab" data-tab="FLIGHT">FLIGHT</button>
+      <button class="sp-tab" data-tab="HUD">HUD</button>
+    </div>
+    <div class="sp-pane active" data-pane="GENERAL">
       <div class="sp-row">
         <span class="sp-lbl">Quality</span>
         <div class="sp-group" data-setting="quality">
           <button class="sp-opt" data-val="LOW">LOW</button>
           <button class="sp-opt" data-val="MED">MED</button>
           <button class="sp-opt" data-val="HIGH">HIGH</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Environment</span>
+        <div class="sp-group" data-setting="env">
+          <button class="sp-opt" data-val="DAY">DAY</button>
+          <button class="sp-opt" data-val="GOLDEN_HOUR">GOLDEN</button>
+          <button class="sp-opt" data-val="OVERCAST">OVERCAST</button>
+          <button class="sp-opt" data-val="DUSK">DUSK</button>
         </div>
       </div>
       <div class="sp-row">
@@ -109,17 +123,49 @@
           <button class="sp-opt" data-val="0">HIDE</button>
         </div>
       </div>
+      <div class="sp-row">
+        <button id="btn-map" class="sp-opt wide">LOAD MAP</button>
+      </div>
     </div>
-    <div class="sp-section">
-      <div class="sp-title">INPUT</div>
+    <div class="sp-pane" data-pane="CAMERA">
       <div class="sp-row">
-        <span class="sp-lbl">Throttle</span>
-        <button id="btn-spring" class="sp-opt">THR: HOLD</button>
+        <span class="sp-lbl">Camera</span>
+        <div class="sp-group" data-setting="cameraMode">
+          <button class="sp-opt" data-val="FPV">FPV</button>
+          <button class="sp-opt" data-val="TOW">TOW</button>
+          <button class="sp-opt" data-val="CHASE">CHASE</button>
+          <button class="sp-opt" data-val="ORBIT">ORBIT</button>
+        </div>
       </div>
       <div class="sp-row">
-        <span class="sp-lbl">Sound</span>
-        <button id="btn-sound" class="sp-opt on">SND: ON</button>
+        <span class="sp-lbl">Chase Dist</span>
+        <div class="sp-group" data-setting="chaseDist">
+          <button class="sp-opt" data-val="NEAR">NEAR</button>
+          <button class="sp-opt" data-val="MID">MID</button>
+          <button class="sp-opt" data-val="FAR">FAR</button>
+        </div>
       </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Cam Tilt</span>
+        <div class="sp-group" data-setting="camTilt">
+          <button class="sp-opt" data-val="0">0&#176;</button>
+          <button class="sp-opt" data-val="15">15&#176;</button>
+          <button class="sp-opt" data-val="24">24&#176;</button>
+          <button class="sp-opt" data-val="35">35&#176;</button>
+          <button class="sp-opt" data-val="45">45&#176;</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Cam Shake</span>
+        <div class="sp-group" data-setting="shake">
+          <button class="sp-opt" data-val="OFF">OFF</button>
+          <button class="sp-opt" data-val="LOW">LOW</button>
+          <button class="sp-opt" data-val="MED">MED</button>
+          <button class="sp-opt" data-val="HIGH">HIGH</button>
+        </div>
+      </div>
+    </div>
+    <div class="sp-pane" data-pane="FLIGHT">
       <div class="sp-row">
         <span class="sp-lbl">Flight Mode</span>
         <div class="sp-group" data-setting="flightMode">
@@ -129,15 +175,24 @@
           <button class="sp-opt" data-val="FAST">FAST</button>
         </div>
       </div>
-    </div>
-    <div class="sp-section">
-      <div class="sp-title">MAP</div>
       <div class="sp-row">
-        <button id="btn-map" class="sp-opt wide">LOAD MAP</button>
+        <span class="sp-lbl">Throttle</span>
+        <button id="btn-spring" class="sp-opt">THR: HOLD</button>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Sound</span>
+        <button id="btn-sound" class="sp-opt on">SND: ON</button>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Wind</span>
+        <div class="sp-group" data-setting="wind">
+          <button class="sp-opt" data-val="CALM">OFF</button>
+          <button class="sp-opt" data-val="BREEZY">BREEZY</button>
+          <button class="sp-opt" data-val="GUSTY">GUSTY</button>
+        </div>
       </div>
     </div>
-    <div class="sp-section">
-      <div class="sp-title">HUD</div>
+    <div class="sp-pane" data-pane="HUD">
       <div class="sp-row" data-toggle="crosshair">Crosshair</div>
       <div class="sp-row" data-toggle="mode">MODE</div>
       <div class="sp-row" data-toggle="arm">ARM</div>
@@ -168,7 +223,7 @@
   ];
   var APP = [
     'js/config.js', 'js/audio.js', 'js/world.js', 'js/physics.js',
-    'js/input.js', 'js/hud.js', 'js/racing.js', 'js/loader.js', 'js/main.js'
+    'js/input.js', 'js/hud.js', 'js/visuals.js', 'js/racing.js', 'js/loader.js', 'js/main.js'
   ];
 
   function showError(msg) {

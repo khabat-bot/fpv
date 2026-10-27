@@ -16,6 +16,14 @@ window.Audio = (function () {
   let _prevThrottle = 0;
   let _lowBattLast = -10;
 
+  /* safe() — returns fallback if v is not a finite number.
+     Web Audio's setTargetAtTime throws "the provided value is non
+     finite" on NaN/Infinity. This wrapper catches every path. */
+  function safe(v, fallback) {
+    var n = (typeof v === 'number') ? v : Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
   function init() {
     if (ctx) return true;
     try {
@@ -102,34 +110,98 @@ window.Audio = (function () {
     }
   }
 
-  function update(drone, throttle) {
+  function update(drone, state) {
     if (!ctx) return;
 
     const t = ctx.currentTime;
     const armed = drone.armed && !drone.crashed;
 
-    const baseFreq = 62 + throttle * 215 + (armed ? 18 : 0);
+    /* State may be the legacy throttle number OR the new state object.
+       Handle both so callers don't need to change in lockstep.
+       EVERY value clamped / safe()'d — negative throttle would make
+       Math.pow(throttle, 0.85) return NaN and throw in Web Audio. */
+    let throttle = 0, pitchIn = 0, rollIn = 0, yawIn = 0;
+    if (typeof state === 'number') {
+      throttle = safe(state, 0);
+    } else if (state) {
+      throttle = safe(state.throttle, 0);
+      pitchIn  = safe(state.pitch,    0);
+      rollIn   = safe(state.roll,     0);
+      yawIn    = safe(state.yaw,      0);
+    }
+    throttle = Math.max(0, Math.min(1, throttle));
+    pitchIn  = Math.max(-1, Math.min(1, pitchIn));
+    rollIn   = Math.max(-1, Math.min(1, rollIn));
+    yawIn    = Math.max(-1, Math.min(1, yawIn));
+
+    /* ---- Motor whine ----
+       Wider + exponential: idle ~130 Hz, full ~800 Hz. Real 5" quad
+       blade-passing freq is roughly 166-1000 Hz, this range gives the
+       characteristic rising scream without being piercing. Warble from
+       stick input mimics per-motor RPM differential — pushing pitch/roll
+       makes 2 motors speed up and 2 slow down, beating audibly. */
+    /* throttle is now guaranteed in [0,1], so Math.pow is safe.
+       All setTargetAtTime args additionally wrapped in safe() as a
+       final defence — no path can hand NaN to Web Audio. */
+    const baseFreq = armed
+      ? 130 + Math.pow(throttle, 0.85) * 670
+      : 65;
+
     const wobble = 1 + Math.sin(t * 7.3) * 0.006 + Math.sin(t * 3.1) * 0.010;
 
-    motorOsc1.frequency.setTargetAtTime(baseFreq * wobble,        t, 0.06);
-    motorOsc2.frequency.setTargetAtTime(baseFreq * 2.02 * wobble, t, 0.06);
+    const warpAmt = armed
+      ? Math.min(0.06, (Math.abs(pitchIn) + Math.abs(rollIn)) * 0.035)
+      : 0;
+    const warpHz  = 16 + Math.abs(pitchIn) * 22 + Math.abs(rollIn) * 22;
+    const warble  = 1 + Math.sin(t * warpHz * Math.PI * 2) * warpAmt;
 
-    motorFilter.frequency.setTargetAtTime(300 + throttle * 2200, t, 0.08);
+    const finalFreq = safe(baseFreq * wobble * warble, 130);
 
-    const motorLevel = armed ? (0.05 + throttle * 0.20) : 0;
+    motorOsc1.frequency.setTargetAtTime(safe(finalFreq,        130), t, 0.06);
+    motorOsc2.frequency.setTargetAtTime(safe(finalFreq * 2.02, 260), t, 0.06);
+
+    motorFilter.frequency.setTargetAtTime(safe(400 + throttle * 3500, 400), t, 0.08);
+
+    const motorLevel = safe(armed ? (0.05 + throttle * 0.22) : 0, 0);
     motorGain.gain.setTargetAtTime(motorLevel, t, 0.08);
 
-    const spd = drone.velocity.length();
-    const windLevel = armed ? Math.min(0.30, spd * 0.014) : 0;
-    windGain.gain.setTargetAtTime(windLevel, t, 0.15);
-    windFilter.frequency.setTargetAtTime(500 + spd * 42, t, 0.15);
+    /* ---- Wind ----
+       Two layers:
+         1. Ambient base — always present, scaled by preset. Standing in
+            a BREEZY field you hear wind even when still; GUSTY has
+            sinusoidal swells synced to drone._windTime (matches physics
+            wind acceleration and visual camera shake).
+         2. Velocity-driven — added on top, louder at speed.
+       Mix: 0.012 (CALM) / 0.05 (BREEZY) / 0.10 + gust (GUSTY). */
+    const spd = safe(drone.velocity && drone.velocity.length(), 0);
+    const windPreset = (typeof CFG !== 'undefined' && CFG.windPreset) || 'CALM';
+    const baseWind = windPreset === 'GUSTY'  ? 0.10
+                   : windPreset === 'BREEZY' ? 0.05
+                   : 0.012;
 
-    const deltaThr = Math.abs(throttle - _prevThrottle);
+    let gustMod = 0;
+    if (windPreset === 'GUSTY') {
+      const wt = safe(drone._windTime, t);
+      gustMod = (Math.sin(wt * 0.7) * 0.5 + Math.sin(wt * 1.9) * 0.3) * 0.06;
+    }
+
+    const spdWind = Math.min(0.28, spd * 0.013);
+    const windLevel = safe(baseWind + gustMod + spdWind, baseWind);
+    windGain.gain.setTargetAtTime(windLevel, t, 0.15);
+    windFilter.frequency.setTargetAtTime(safe(500 + spd * 42, 500), t, 0.15);
+
+    /* ---- Prop wash + crackle ----
+       Wash bandpass rises with deltaThr: gentle whoosh at small throttle
+       changes, sharper "snap/crackle" on hard punches (250 Hz → 1800 Hz).
+       Matches the motor desync kicks in physics. */
+    const deltaThr = safe(Math.abs(throttle - _prevThrottle), 0);
     _prevThrottle = throttle;
-    const washLevel = armed
-      ? Math.min(0.20, deltaThr * 0.85 + throttle * 0.03)
-      : 0;
+    const washLevel = safe(armed
+      ? Math.min(0.22, deltaThr * 0.90 + throttle * 0.03)
+      : 0, 0);
     washGain.gain.setTargetAtTime(washLevel, t, 0.05);
+    washFilter.frequency.setTargetAtTime(
+      safe(250 + Math.min(1550, deltaThr * 4000), 250), t, 0.05);
 
     if (armed && t - _lowBattLast > 1.6) {
       const vPerCell = drone.voltage / CFG.battery.cells;

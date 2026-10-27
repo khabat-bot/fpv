@@ -136,7 +136,8 @@ window.World = (function () {
     scene.fog = new THREE.Fog(0xc8d8e6, 140, 580);
 
     /* ---------------- lighting ---------------------------------------- */
-    scene.add(new THREE.HemisphereLight(0xdcefff, 0x3a5030, 0.90));
+    const hemi = new THREE.HemisphereLight(0xdcefff, 0x3a5030, 0.90);
+    scene.add(hemi);
 
     const sun = new THREE.DirectionalLight(0xfff2d6, 1.05);
     sun.position.set(180, 260, 120);
@@ -431,6 +432,10 @@ window.World = (function () {
       root: root,
       gates: gates,
       sky: sky,
+      skyMat: skyMat,
+      sun: sun,
+      hemi: hemi,
+      fill: fill,
       colliders: colliders,
       heightAt: heightAt,
       advanceFrame: function () {},   // procedural: nothing to advance

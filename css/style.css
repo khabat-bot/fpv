@@ -565,3 +565,350 @@ body.gfx-low #vignette { opacity: 0; }
   text-align: center;
   padding: 9px 12px;
 }
+
+
+/* ==========================================================================
+   UI POLISH PATCH — v2 (appended 2026-10-27)
+   Overrides base styles above. Same specificity, later rule wins.
+   ========================================================================== */
+
+/* ---- OSD: labels, values, top-left panel ---- */
+.osd .lbl {
+  color: rgba(207, 233, 255, 0.48);
+  width: 40px;
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+.osd .val {
+  color: #eaf6ff;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+}
+.osd-tl {
+  top: calc(10px + env(safe-area-inset-top));
+  left: calc(12px + env(safe-area-inset-left));
+  padding: 9px 13px;
+  background: linear-gradient(180deg, rgba(6, 14, 24, 0.60), rgba(6, 14, 24, 0.34));
+  border: 1px solid rgba(140, 200, 255, 0.16);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.32);
+}
+
+/* ARM status dot — inherits inline color set by hud.js */
+#osd-arm::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+/* ---- Crosshair: sharper, FPV-authentic ---- */
+#crosshair {
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0 -16px;
+}
+#crosshair::before,
+#crosshair::after {
+  width: 1.5px;
+  height: 9px;
+  margin-left: -0.75px;
+  background: rgba(150, 250, 180, 0.92);
+  box-shadow: 0 0 6px rgba(110, 242, 160, 0.65);
+}
+#crosshair span {
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  background: rgba(150, 250, 180, 1);
+  box-shadow: 0 0 6px rgba(110, 242, 160, 0.85);
+}
+#crosshair span::before,
+#crosshair span::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 6px;
+  height: 1.5px;
+  margin-top: -0.75px;
+  background: rgba(150, 250, 180, 0.60);
+  box-shadow: 0 0 3px rgba(110, 242, 160, 0.40);
+}
+#crosshair span::before { left: -13px; }
+#crosshair span::after  { right: -13px; }
+
+/* ---- Buttons: iOS-like depth ---- */
+.btn {
+  font-size: 11.5px;
+  letter-spacing: 0.09em;
+  padding: 10px 16px;
+  min-width: 96px;
+  color: #dceeff;
+  background: linear-gradient(180deg, rgba(18, 32, 48, 0.68), rgba(8, 18, 30, 0.62));
+  border: 1px solid rgba(140, 200, 255, 0.28);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.28);
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+.btn:active {
+  background: linear-gradient(180deg, rgba(40, 90, 140, 0.70), rgba(20, 60, 100, 0.62));
+  transform: translateY(1px);
+}
+.btn.on {
+  background: linear-gradient(180deg, rgba(40, 200, 110, 0.42), rgba(20, 140, 70, 0.38));
+  border-color: rgba(110, 242, 160, 0.85);
+  color: #c6ffd8;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 0 14px rgba(110, 242, 160, 0.25);
+}
+.btn.off {
+  background: linear-gradient(180deg, rgba(160, 60, 60, 0.36), rgba(90, 30, 30, 0.32));
+  border-color: rgba(255, 130, 130, 0.55);
+  color: #ffb8b8;
+}
+
+/* ---- Joysticks: richer depth ---- */
+.stick {
+  border: 2px solid rgba(160, 210, 255, 0.26);
+  background:
+    radial-gradient(circle at 50% 50%,
+      rgba(120, 180, 255, 0.08) 0%,
+      rgba(120, 180, 255, 0.02) 66%,
+      rgba(120, 180, 255, 0.10) 100%);
+  box-shadow:
+    inset 0 0 28px rgba(120, 180, 255, 0.06),
+    0 4px 16px rgba(0, 0, 0, 0.25);
+}
+.knob {
+  background: radial-gradient(circle at 35% 30%,
+      rgba(255, 255, 255, 0.92) 0%,
+      rgba(150, 205, 255, 0.55) 55%,
+      rgba(80, 140, 220, 0.42) 100%);
+  box-shadow:
+    0 0 18px rgba(110, 190, 255, 0.55),
+    inset 0 0 10px rgba(255, 255, 255, 0.40),
+    inset 0 -2px 4px rgba(0, 40, 80, 0.28);
+}
+
+/* ---- Settings panel: richer card ---- */
+.sp-inner {
+  padding: 18px 22px;
+  border-radius: 14px;
+  border: 1px solid rgba(140, 200, 255, 0.32);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.60),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.sp-title {
+  font-size: 9.5px;
+  color: rgba(140, 200, 255, 0.55);
+  letter-spacing: 0.18em;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  font-weight: 500;
+}
+.sp-opt {
+  font-size: 10.5px;
+  padding: 6px 11px;
+  min-width: 38px;
+  border-radius: 7px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.sp-opt.active {
+  background: linear-gradient(180deg, rgba(40, 200, 110, 0.42), rgba(20, 140, 70, 0.36));
+  border-color: rgba(110, 242, 160, 0.9);
+  color: #c6ffd8;
+  box-shadow: 0 0 10px rgba(110, 242, 160, 0.20);
+}
+.sp-opt.on {
+  background: linear-gradient(180deg, rgba(40, 200, 110, 0.42), rgba(20, 140, 70, 0.36));
+  border-color: rgba(110, 242, 160, 0.9);
+  color: #c6ffd8;
+  box-shadow: 0 0 10px rgba(110, 242, 160, 0.20);
+}
+.sp-opt.off {
+  background: linear-gradient(180deg, rgba(160, 60, 60, 0.36), rgba(90, 30, 30, 0.32));
+  border-color: rgba(255, 130, 130, 0.55);
+  color: #ffb8b8;
+}
+
+/* ---- Crash overlay ---- */
+.crash-title {
+  font-size: clamp(24px, 6.5vw, 38px);
+  letter-spacing: 0.24em;
+  color: #ff7a7a;
+  font-weight: 600;
+  text-shadow:
+    0 0 24px rgba(255, 60, 60, 0.75),
+    0 0 48px rgba(255, 30, 30, 0.35);
+}
+.crash-sub {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: rgba(255, 210, 210, 0.75);
+}
+
+/* ---- Help overlay ---- */
+#help {
+  color: rgba(200, 225, 255, 0.82);
+  background: rgba(6, 14, 24, 0.72);
+  border: 1px solid rgba(140, 200, 255, 0.22);
+  border-radius: 11px;
+  padding: 12px 18px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+#help b { color: #8ee0ff; font-weight: 600; }
+
+/* ---- FPS counter ---- */
+#fps-counter {
+  font-size: 10.5px;
+  letter-spacing: 0.10em;
+  padding: 5px 12px;
+  border-radius: 8px;
+  color: #9effb2;
+  background: rgba(6, 14, 24, 0.72);
+  border-color: rgba(120, 180, 255, 0.22);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+
+/* ==========================================================================
+   SETTINGS TABS PATCH — v3 (appended)
+   Splits the settings panel into 4 tabs. All existing rule overrides below
+   are additive only — no base rules removed.
+   ========================================================================== */
+
+.sp-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid rgba(140, 200, 255, 0.18);
+  position: sticky;
+  top: 0;
+  background: rgba(8, 18, 30, 0.97);
+  z-index: 2;
+}
+.sp-tab {
+  flex: 1 1 0;
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  padding: 8px 4px;
+  color: rgba(207, 233, 255, 0.55);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+  text-align: center;
+  white-space: nowrap;
+}
+.sp-tab:active {
+  color: rgba(207, 233, 255, 0.90);
+}
+.sp-tab.active {
+  color: #c6ffd8;
+  background: rgba(40, 200, 110, 0.18);
+  border-color: rgba(110, 242, 160, 0.55);
+  box-shadow: 0 0 10px rgba(110, 242, 160, 0.15);
+}
+
+.sp-pane { display: none; }
+.sp-pane.active { display: block; }
+
+
+/* ==========================================================================
+   HUD COMPACT PATCH — v4 (appended)
+   Smaller OSD, tighter spacing, plus auto-hide the top-left panel when
+   every child row is hidden (kills the ghost rectangle from polish v2).
+   ========================================================================== */
+
+/* ---- Smaller overall OSD ---- */
+.osd {
+  font-size: 10.5px;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+}
+.osd .row {
+  gap: 5px;
+}
+.osd .lbl {
+  width: 34px;
+  font-size: 8.5px;
+  letter-spacing: 0.12em;
+}
+.osd .val {
+  font-size: 10.5px;
+}
+.osd .dim {
+  font-size: 9.5px;
+}
+
+/* ---- Tighter top-left panel ---- */
+.osd-tl {
+  top: calc(8px + env(safe-area-inset-top));
+  left: calc(10px + env(safe-area-inset-left));
+  padding: 6px 9px;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+}
+
+/* Auto-hide the panel when every .row inside is .hud-off.
+   :has() is supported on iOS 16.4+ — belt-and-braces with JS fallback
+   in applyHudVisibility(). */
+.osd-tl:not(:has(.row:not(.hud-off))) {
+  display: none !important;
+}
+
+/* ---- Smaller crosshair ---- */
+#crosshair {
+  width: 24px;
+  height: 24px;
+  margin: -12px 0 0 -12px;
+}
+#crosshair::before,
+#crosshair::after {
+  height: 7px;
+}
+#crosshair span::before,
+#crosshair span::after {
+  width: 5px;
+}
+#crosshair span::before { left: -10px; }
+#crosshair span::after  { right: -10px; }
+
+/* ---- Smaller throttle bar ---- */
+.thr-bar {
+  width: 96px;
+  height: 4px;
+  border-radius: 2px;
+}
+.thr-fill {
+  border-radius: 2px;
+}
+.thr-txt {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+.osd-bc {
+  bottom: calc(8px + env(safe-area-inset-bottom));
+}

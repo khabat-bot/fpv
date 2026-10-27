@@ -33,10 +33,18 @@
   }
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(100, 1, 0.06, 2000);
+  const camera = new THREE.PerspectiveCamera(100, 1, 0.04, 2000);
 
   /* --------------------------- world --------------------------------- */
   let world = World.build(scene);
+  /* Environment-preset refs — cached here so applyEnv() stays valid
+     even after loadMapFromFile() replaces `world`. The scene lights
+     survive map loads (they're added to scene, not to world.root),
+     so mutating these objects keeps the env preset authoritative. */
+  let envSun    = world.sun    || null;
+  let envHemi   = world.hemi   || null;
+  let envFill   = world.fill   || null;
+  let envSkyMat = (world.skyMat || (world.sky && world.sky.material)) || null;
 
   /* --------------------------- drone --------------------------------- */
   const drone = new Drone();
@@ -51,6 +59,9 @@
   setFloorFromWorld(world);
   drone.reset(world.spawn.x, world.spawn.z);
 
+  /* Build the visible drone model (follows physics state each frame). */
+  if (window.DroneVisual) DroneVisual.build(scene);
+
   /* Debug globals — accessible from Safari Web Inspector */
   window.__scene = scene;
   window.__drone = drone;
@@ -61,9 +72,15 @@
   HUD.init();
 
   /* --------------------------- camera rig ---------------------------- */
-  const camTilt = new THREE.Quaternion().setFromAxisAngle(
-    new THREE.Vector3(1, 0, 0), CFG.camera.tiltDeg * Math.PI / 180);
-  const camOffsetLocal = new THREE.Vector3(0, 0.05, -0.06);
+  const _camTiltAxis = new THREE.Vector3(1, 0, 0);
+  let camTilt = new THREE.Quaternion().setFromAxisAngle(
+    _camTiltAxis, CFG.camera.tiltDeg * Math.PI / 180);
+  function setCamTilt(deg) {
+    camTilt.setFromAxisAngle(_camTiltAxis, deg * Math.PI / 180);
+  }
+  const _shakeQ = new THREE.Quaternion();
+  const _shakeE = new THREE.Euler();
+  const camOffsetLocal = new THREE.Vector3(0, 0.06, 0);
   const tmpV = new THREE.Vector3();
 
   /* --------------------------- resizing ------------------------------ */
@@ -341,6 +358,9 @@
       window.__world = world;
       drone.colliders = result.colliders;
       drone.colliderIndex = result.colliderIndex;
+      /* Re-apply env preset so it overrides the forced background/fog
+         set above — the preset is the source of truth for sky+lighting. */
+      applyEnv(settings.env || 'DAY');
 
       /* re-evaluate DPR based on merged mesh count */
       if (result.meshCount > 2000) setDPRCap(1.0);
@@ -420,7 +440,14 @@
     quality: qualityName,
     fpsCap: 0,
     fpsCounter: true,
+    cameraMode: 'FPV',
+    camTilt: 24,
+    wind: 'CALM',
+    shake: 'LOW',
+    chaseDist: 'MID',
+    tab: 'GENERAL',
     flightMode: 'ACRO',
+    env: 'DAY',
     hud: {
       crosshair: true, mode: true, arm: true, batt: true,
       time: true, spd: true, alt: true, thr: true
@@ -437,12 +464,39 @@
         if (s.quality && QUALITY[s.quality]) settings.quality = s.quality;
         if (typeof s.fpsCap === 'number') settings.fpsCap = s.fpsCap;
         if (typeof s.fpsCounter === 'boolean') settings.fpsCounter = s.fpsCounter;
+        if (typeof s.cameraMode === 'string'
+            && ['FPV','TOW','CHASE','ORBIT'].indexOf(s.cameraMode) !== -1) {
+          settings.cameraMode = s.cameraMode;
+        }
+        if (typeof s.camTilt === 'number' && s.camTilt >= 0 && s.camTilt <= 90) {
+          settings.camTilt = s.camTilt;
+        }
+        if (typeof s.wind === 'string'
+            && ['CALM','BREEZY','GUSTY'].indexOf(s.wind) !== -1) {
+          settings.wind = s.wind;
+        }
+        if (typeof s.shake === 'string'
+            && ['OFF','LOW','MED','HIGH'].indexOf(s.shake) !== -1) {
+          settings.shake = s.shake;
+        }
+        if (typeof s.chaseDist === 'string'
+            && ['NEAR','MID','FAR'].indexOf(s.chaseDist) !== -1) {
+          settings.chaseDist = s.chaseDist;
+        }
+        if (typeof s.tab === 'string'
+            && ['GENERAL','CAMERA','FLIGHT','HUD'].indexOf(s.tab) !== -1) {
+          settings.tab = s.tab;
+        }
         var VALID_MODES = { ACRO:1, SLOW:1, SPORT:1, FAST:1 };
         if (typeof s.flightMode === 'string' && VALID_MODES[s.flightMode]) {
           settings.flightMode = s.flightMode;
         } else if (typeof s.easyMode === 'boolean') {
           /* Migration: old toggle → preset. */
           settings.flightMode = s.easyMode ? 'SPORT' : 'ACRO';
+        }
+        if (typeof s.env === 'string'
+            && window.CFG && CFG.env && CFG.env[s.env]) {
+          settings.env = s.env;
         }
         if (s.hud && typeof s.hud === 'object') Object.assign(settings.hud, s.hud);
       }
@@ -469,6 +523,14 @@
       if (!el) continue;
       el.classList.toggle('hud-off', !settings.hud[key]);
     }
+    /* Collapse the telemetry panel when every row inside is hidden.
+       Otherwise the panel's padding + border + backdrop stays visible
+       as a ghost rectangle. */
+    var tl = document.querySelector('.osd-tl');
+    if (tl) {
+      var anyVisible = tl.querySelector('.row:not(.hud-off)');
+      tl.classList.toggle('hud-off', !anyVisible);
+    }
   }
   function applyFpsCap() { fpsCap = settings.fpsCap; }
   function applyFpsCounter() {
@@ -483,12 +545,107 @@
       modeEl.textContent = (mode === 'ACRO') ? 'ACRO' : ('ANGLE ' + mode);
     }
   }
+  let cameraMode = 'FPV';
+  const chaseSmoothPos = new THREE.Vector3();
+  let chaseInit = false;
+
+  function applyCameraMode() {
+    const prev = cameraMode;
+    cameraMode = settings.cameraMode || 'FPV';
+    if (prev !== cameraMode) chaseInit = false;
+    if (window.DroneVisual && DroneVisual.setFPVMode) {
+      DroneVisual.setFPVMode(cameraMode === 'FPV');
+    }
+  }
+  function applyCamTilt() {
+    setCamTilt(settings.camTilt);
+  }
+  function applyWind() {
+    CFG.windPreset = settings.wind;
+  }
+  const SHAKE_LEVELS = { OFF: 0, LOW: 0.0003, MED: 0.0008, HIGH: 0.0015 };
+  let shakeAmt = SHAKE_LEVELS.LOW;
+  function applyShake() {
+    shakeAmt = SHAKE_LEVELS[settings.shake] != null
+      ? SHAKE_LEVELS[settings.shake]
+      : SHAKE_LEVELS.LOW;
+  }
+  const CHASE_DIST = { NEAR: 0.5, MID: 1.0, FAR: 1.8 };
+  let chaseDist = CHASE_DIST.MID;
+  function applyChaseDist() {
+    chaseDist = CHASE_DIST[settings.chaseDist] != null
+      ? CHASE_DIST[settings.chaseDist]
+      : CHASE_DIST.MID;
+  }
+
+  function applyEnv(name) {
+    var envs = (window.CFG && CFG.env) ? CFG.env : null;
+    if (!envs) return;
+    var e = envs[name] || envs.DAY;
+    if (!e) return;
+
+    if (e.background != null) {
+      scene.background = new THREE.Color(e.background);
+    }
+    if (e.fogColor != null) {
+      if (!scene.fog) {
+        scene.fog = new THREE.Fog(e.fogColor,
+          (e.fogNear != null) ? e.fogNear : 140,
+          (e.fogFar  != null) ? e.fogFar  : 580);
+      } else {
+        scene.fog.color.setHex(e.fogColor);
+        if (e.fogNear != null) scene.fog.near = e.fogNear;
+        if (e.fogFar  != null) scene.fog.far  = e.fogFar;
+      }
+    }
+    if (envSun) {
+      if (e.sunColor     != null) envSun.color.setHex(e.sunColor);
+      if (e.sunIntensity != null) envSun.intensity = e.sunIntensity;
+    }
+    if (envHemi) {
+      if (e.hemiSkyColor    != null) envHemi.color.setHex(e.hemiSkyColor);
+      if (e.hemiGroundColor != null) envHemi.groundColor.setHex(e.hemiGroundColor);
+      if (e.hemiIntensity   != null) envHemi.intensity = e.hemiIntensity;
+    }
+    if (envFill) {
+      if (e.fillColor     != null) envFill.color.setHex(e.fillColor);
+      if (e.fillIntensity != null) envFill.intensity = e.fillIntensity;
+    }
+    if (envSkyMat && envSkyMat.uniforms) {
+      if (e.skyTop != null && envSkyMat.uniforms.uTop && envSkyMat.uniforms.uTop.value) {
+        envSkyMat.uniforms.uTop.value.setHex(e.skyTop);
+      }
+      if (e.skyBot != null && envSkyMat.uniforms.uBot && envSkyMat.uniforms.uBot.value) {
+        envSkyMat.uniforms.uBot.value.setHex(e.skyBot);
+      }
+    }
+  }
+  function applySettingsTab(name) {
+    const panel = document.getElementById('settings-panel');
+    if (!panel) return;
+    const valid = ['GENERAL','CAMERA','FLIGHT','HUD'];
+    const tabName = (valid.indexOf(name) !== -1) ? name : 'GENERAL';
+    panel.querySelectorAll('.sp-tab').forEach(function (t) {
+      t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
+    });
+    panel.querySelectorAll('.sp-pane').forEach(function (p) {
+      p.classList.toggle('active', p.getAttribute('data-pane') === tabName);
+    });
+    settings.tab = tabName;
+    saveSettings();
+  }
   function applyAllSettings() {
     applyQuality(settings.quality);
     applyFpsCap();
     applyFpsCounter();
     applyEasyMode();
     applyHudVisibility();
+    applyCameraMode();
+    applyCamTilt();
+    applyWind();
+    applyShake();
+    applyChaseDist();
+    applyEnv(settings.env || 'DAY');
   }
 
   function buildSettingsPanel() {
@@ -521,6 +678,25 @@
         } else if (setting === 'flightMode') {
           settings.flightMode = val;
           applyEasyMode();
+        } else if (setting === 'cameraMode') {
+          settings.cameraMode = val;
+          applyCameraMode();
+        } else if (setting === 'camTilt') {
+          settings.camTilt = parseInt(val, 10);
+          applyCamTilt();
+        } else if (setting === 'wind') {
+          settings.wind = val;
+          applyWind();
+          if (typeof Audio !== 'undefined' && Audio.resume) Audio.resume();
+        } else if (setting === 'shake') {
+          settings.shake = val;
+          applyShake();
+        } else if (setting === 'chaseDist') {
+          settings.chaseDist = val;
+          applyChaseDist();
+        } else if (setting === 'env') {
+          settings.env = val;
+          applyEnv(val);
         }
         saveSettings();
         refreshSegmented();
@@ -547,6 +723,12 @@
           else if (setting === 'fpsCap') active = (parseInt(val, 10) === settings.fpsCap);
           else if (setting === 'fpsCounter') active = ((val === '1') === settings.fpsCounter);
           else if (setting === 'flightMode') active = (val === settings.flightMode);
+          else if (setting === 'cameraMode') active = (val === settings.cameraMode);
+          else if (setting === 'camTilt') active = (parseInt(val, 10) === settings.camTilt);
+          else if (setting === 'wind') active = (val === settings.wind);
+          else if (setting === 'shake') active = (val === settings.shake);
+          else if (setting === 'chaseDist') active = (val === settings.chaseDist);
+          else if (setting === 'env') active = (val === settings.env);
           btn.classList.toggle('active', active);
         });
       });
@@ -556,12 +738,19 @@
       });
     }
 
+    panel.querySelectorAll('.sp-tab').forEach(function (t) {
+      t.addEventListener('click', function () {
+        applySettingsTab(t.getAttribute('data-tab'));
+      });
+    });
+
     refreshSegmented();
 
     var btnSettings = document.getElementById('btn-settings');
     if (btnSettings) {
       btnSettings.addEventListener('click', function () {
         refreshSegmented();
+        applySettingsTab(settings.tab || 'GENERAL');
         panel.classList.remove('hidden');
       });
     }
@@ -613,9 +802,82 @@
     if (drone.armed && !drone.crashed) flightTime += dt;
 
 
-    tmpV.copy(camOffsetLocal).applyQuaternion(drone.quat);
-    camera.position.copy(drone.position).add(tmpV);
-    camera.quaternion.copy(drone.quat).multiply(camTilt);
+    /* Update drone visual to follow physics state */
+    if (window.DroneVisual) DroneVisual.update(drone, state, dt);
+
+    /* Camera — FPV / TOW / CHASE / ORBIT */
+    if (cameraMode === 'FPV') {
+      tmpV.copy(camOffsetLocal).applyQuaternion(drone.quat);
+      camera.position.copy(drone.position).add(tmpV);
+      camera.quaternion.copy(drone.quat).multiply(camTilt);
+    } else if (cameraMode === 'TOW') {
+      /* Rigid stick-cam: 0.15 up / 0.35 back in drone local frame.
+         Orientation = drone quaternion → rolls/pitches/yaws with drone,
+         looks forward, drone appears in lower-center of view. */
+      tmpV.set(0, 0.15, 0.35).applyQuaternion(drone.quat);
+      camera.position.copy(drone.position).add(tmpV);
+      camera.quaternion.copy(drone.quat);
+    } else if (cameraMode === 'CHASE') {
+      /* Smoothed chase — position-only smoothing, dt-independent,
+         always looks at the drone directly. */
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(drone.quat);
+      fwd.y = 0;
+      if (fwd.lengthSq() < 0.01) fwd.set(0, 0, -1);
+      fwd.normalize();
+      const targetPos = new THREE.Vector3().copy(drone.position)
+        .addScaledVector(fwd, -chaseDist);
+      targetPos.y += 0.4 + chaseDist * 0.15;
+      if (!chaseInit) {
+        chaseSmoothPos.copy(targetPos);
+        chaseInit = true;
+      } else {
+        const k = 1 - Math.exp(-dt * 8);
+        chaseSmoothPos.lerp(targetPos, k);
+      }
+      camera.position.copy(chaseSmoothPos);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(drone.position);
+    } else if (cameraMode === 'ORBIT') {
+      const _t = performance.now() * 0.001;
+      const _r = 1.6;
+      const orbitPos = new THREE.Vector3(
+        drone.position.x + Math.cos(_t * 0.4) * _r,
+        drone.position.y + 0.6,
+        drone.position.z + Math.sin(_t * 0.4) * _r
+      );
+      const d = camera.position.distanceTo(orbitPos);
+      const k = d > 5 ? 1.0 : (1 - Math.exp(-dt * 12));
+      camera.position.lerp(orbitPos, k);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(drone.position);
+    }
+
+    /* Camera micro-shake — FPV + TOW only.
+       Driven by drone._windTime phase through 3 summed sines per axis
+       at motor-frequency (5.5–14 Hz). NO per-frame randomness — the
+       previous Math.random() version was white noise, not vibration.
+       Amplitude scales with throttle + speed; wind presets amplify.
+       All three axes centred around zero, so no drift.
+       TOW gets 0.7× because the camera stick damps the vibration. */
+    if ((cameraMode === 'FPV' || cameraMode === 'TOW') && shakeAmt > 0) {
+      const spd = drone.velocity.length();
+      const thr = drone.throttleIn || 0;
+      const modeMul = (cameraMode === 'TOW') ? 0.7 : 1.0;
+      let shakeMag = shakeAmt * (0.5 + thr * 1.5 + spd * 0.02) * modeMul;
+      if (settings.wind === 'GUSTY') shakeMag *= 1.6;
+      else if (settings.wind === 'BREEZY') shakeMag *= 1.2;
+      if (shakeMag > 0.00002) {
+        const t = drone._windTime || 0;
+        const motorHz = 5.5 + thr * 8.5;   // 5.5–14 Hz, safe at 60 fps
+        const w = t * motorHz * Math.PI * 2;
+        const px = Math.sin(w)                + Math.sin(w * 1.61 + 0.4) * 0.55;
+        const py = Math.cos(w * 0.87 + 1.1)   + Math.sin(w * 1.37 + 2.3) * 0.50;
+        const pz = Math.sin(w * 1.13 + 0.6)   * 0.6;
+        _shakeE.set(px * shakeMag, py * shakeMag, pz * shakeMag);
+        _shakeQ.setFromEuler(_shakeE);
+        camera.quaternion.multiply(_shakeQ);
+      }
+    }
 
     if (world.sky) world.sky.position.copy(camera.position);
     if (world.ground) {
@@ -625,7 +887,7 @@
     }
 
     HUD.update(drone, camera, flightTime, state.throttle);
-    Audio.update(drone, state.throttle);
+    Audio.update(drone, state);
 
     if (drone.crashed && !crashShown) {
       crashShown = true;

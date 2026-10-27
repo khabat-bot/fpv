@@ -43,6 +43,8 @@ window.Drone = (function () {
     this._wobAmp = 0;
     this._wobPhase = 0;
     this._prevThrottle = 0;
+    this._grounded = false;
+    this._groundedTime = 0;
 
     this.reset(0, 0);
   }
@@ -76,6 +78,9 @@ window.Drone = (function () {
     this._wobAmp = 0;
     this._wobPhase = 0;
     this._prevThrottle = 0;
+    this._windTime = 0;
+    this._grounded = false;
+    this._groundedTime = 0;
   };
 
   Drone.prototype.toggleArm = function () {
@@ -94,6 +99,8 @@ window.Drone = (function () {
 
     const thr = this.armed ? Math.max(0, Math.min(1, input.throttle)) : 0;
     this.throttleIn = thr;
+    this._windTime = (this._windTime || 0) + dt;
+    this._groundedTime = Math.max(0, (this._groundedTime || 0) - dt);
 
     const e = CFG.expo;
     const easyActive = !!(this.easyMode && this.armed);
@@ -287,6 +294,29 @@ window.Drone = (function () {
       acc.y -= CFG.gravity;
     }
 
+    /* ===== wind ====================================================
+       Applied uniformly in both flight modes. Horizontal push makes
+       the drone drift and forces a lean to hold position; gusty adds
+       oscillation on top. Drag (below) damps the resulting velocity.
+       Suppressed while grounded — a landed quad doesn't slide across
+       the pad in a breeze. Only affects BREEZY/GUSTY (CALM is 0 anyway). */
+    if ((this._groundedTime || 0) <= 0 && CFG.wind && CFG.windPreset) {
+      const wp = CFG.wind[CFG.windPreset];
+      if (wp) {
+        let wx = wp.x || 0, wy = wp.y || 0, wz = wp.z || 0;
+        const gust = wp.gust || 0;
+        if (gust > 0) {
+          const t = this._windTime;
+          wx += Math.sin(t * 0.7) * gust * 1.2 + Math.sin(t * 1.9) * gust * 0.4;
+          wy += Math.sin(t * 1.3) * gust * 0.35;
+          wz += Math.cos(t * 0.9) * gust * 1.0 + Math.sin(t * 2.3) * gust * 0.35;
+        }
+        acc.x += wx;
+        acc.y += wy;
+        acc.z += wz;
+      }
+    }
+
     const speed = this.velocity.length();
     if (speed > 1e-5) {
       const k = CFG.dragLinear + CFG.dragQuadratic * speed;
@@ -325,7 +355,21 @@ window.Drone = (function () {
       CFG.battery.cells * restCell - this._smoothCurrent * Rpack);
   };
 
-  Drone.prototype._ensureBVH = function() {
+  Drone.prototype._disposeBVH = function() {
+  if (this.collisionGeom) {
+    if (typeof this.collisionGeom.disposeBoundsTree === 'function') {
+      this.collisionGeom.disposeBoundsTree();
+    }
+    this.collisionGeom.dispose();
+  }
+  this.collisionGeom = null;
+  this.collisionBVH = null;
+  this._bvhColliderCount = 0;
+  this._bvhLogCount = 0;
+  if (typeof window !== 'undefined') window.__bvh = null;
+};
+
+Drone.prototype._ensureBVH = function() {
   if (this._bvhFailed) return;
   if (this._bvhBuilding) return;
   if (typeof THREE === 'undefined') return;
@@ -369,12 +413,33 @@ window.Drone = (function () {
   }
 
   var cols = this.colliders || (window.__world && window.__world.colliders) || null;
-  if (!cols || cols.length === 0) return;
+  if (!cols || cols.length === 0) {
+    // If we had a BVH from a previously-loaded map, dispose it — otherwise
+    // _collide() keeps using stale triangles against a world that no
+    // longer has any colliders.
+    if (this.collisionBVH) {
+      console.log('[BVH] no colliders — disposing stale BVH');
+      this._disposeBVH();
+    }
+    return;
+  }
 
   // Only imported maps get a BVH. Procedural world keeps its accurate
   // cylinder/box colliders + getFloorY snap in the original AABB path.
   var BVH_MIN_COLLIDERS = 500;
-  if (cols.length < BVH_MIN_COLLIDERS) return;
+  if (cols.length < BVH_MIN_COLLIDERS) {
+    // Procedural world — falls through to the AABB path in _collide().
+    // Critically, we must dispose any BVH left over from a previously
+    // loaded map, otherwise _collide() sees collisionBVH truthy and
+    // uses stale triangles against the procedural world.
+    if (this.collisionBVH) {
+      console.log('[BVH] colliders dropped below ' + BVH_MIN_COLLIDERS +
+                  ' (now ' + cols.length + ') — disposing stale BVH, ' +
+                  'using AABB path');
+      this._disposeBVH();
+    }
+    return;
+  }
 
   var colSrc = (this.colliders === cols) ? 'drone' : 'world';
 
@@ -384,15 +449,7 @@ window.Drone = (function () {
   // Colliders changed since last build (map imported) → dispose + rebuild
   if (this.collisionBVH) {
     console.log('[BVH] colliders changed:', this._bvhColliderCount, '->', cols.length, '- rebuilding');
-    if (this.collisionGeom) {
-      if (typeof this.collisionGeom.disposeBoundsTree === 'function') {
-        this.collisionGeom.disposeBoundsTree();
-      }
-      this.collisionGeom.dispose();
-    }
-    this.collisionGeom = null;
-    this.collisionBVH = null;
-    this._bvhLogCount = 0;
+    this._disposeBVH();
   }
 
   var scene = (window.__scene) || this.scene || null;
@@ -561,6 +618,30 @@ Drone.prototype._collideBVH = function() {
   }
   var depth = sphere.radius - dist;
 
+  // Ground contact for wind gating. Two independent signals:
+  //  1. Surface normal points up (flat floor, bridge deck, roof).
+  //  2. Closest contact point is well below the sphere center — catches
+  //     edges/corners where the winning triangle might be tilted and
+  //     normal.y is unreliable (intersectsTriangle stops at first hit,
+  //     so `closest` may be on a ramp rather than the flat floor).
+  // Both refresh this._groundedTime to 0.15s. The wind gate in step()
+  // reads that timer — without the window, tiny penetration gaps between
+  // BVH collision frames let wind apply on the "in-between" frames and
+  // the drone creeps across the surface (the actual reported symptom).
+  var _isFloor = (normal.y > 0.4) ||
+                 (closest.y < sphere.center.y - 0.1);
+  if (_isFloor) {
+    this._grounded = true;
+    this._groundedTime = 0.15;
+    // Friction: kill horizontal velocity accumulated during penetration
+    // gaps (and any gust spikes that made it through). Mirrors the
+    // AABB floor-snap damping of 0.82/0.85.
+    if (this.velocity) {
+      this.velocity.x *= 0.85;
+      this.velocity.z *= 0.85;
+    }
+  }
+
   // Push out (in world delta, applied to local position — safe if parent
   // has no rotation/scale, which is the standard drone-in-scene setup).
   this.position.addScaledVector(normal, depth + 0.001);
@@ -587,6 +668,7 @@ Drone.prototype._collideBVH = function() {
 };
 
 Drone.prototype._collide = function() {
+  this._grounded = false;
   this._ensureBVH();
   if (this.collisionBVH) {
     // Respawn if far below world
@@ -611,6 +693,8 @@ Drone.prototype._collide = function() {
       if (this.velocity.y < 0) this.velocity.y = 0;
       this.velocity.x *= 0.82;
       this.velocity.z *= 0.82;
+      this._grounded = true;
+      this._groundedTime = 0.15;
 
       if (this.armed && (vyImpact > CFG.crashSpeed || depth > (CFG.depthCrash || 1.5))) {
         this.crash();
@@ -671,6 +755,8 @@ Drone.prototype._collide = function() {
           this.velocity.y = 0;
           this.velocity.x *= 0.85;
           this.velocity.z *= 0.85;
+          this._grounded = true;
+          this._groundedTime = 0.15;
           if (this.armed && impact > CFG.crashSpeed) this.crash();
         }
       }
