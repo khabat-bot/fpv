@@ -420,6 +420,7 @@
     quality: qualityName,
     fpsCap: 0,
     fpsCounter: true,
+    flightMode: 'ACRO',
     hud: {
       crosshair: true, mode: true, arm: true, batt: true,
       time: true, spd: true, alt: true, thr: true
@@ -436,6 +437,13 @@
         if (s.quality && QUALITY[s.quality]) settings.quality = s.quality;
         if (typeof s.fpsCap === 'number') settings.fpsCap = s.fpsCap;
         if (typeof s.fpsCounter === 'boolean') settings.fpsCounter = s.fpsCounter;
+        var VALID_MODES = { ACRO:1, SLOW:1, SPORT:1, FAST:1 };
+        if (typeof s.flightMode === 'string' && VALID_MODES[s.flightMode]) {
+          settings.flightMode = s.flightMode;
+        } else if (typeof s.easyMode === 'boolean') {
+          /* Migration: old toggle → preset. */
+          settings.flightMode = s.easyMode ? 'SPORT' : 'ACRO';
+        }
         if (s.hud && typeof s.hud === 'object') Object.assign(settings.hud, s.hud);
       }
     } catch (e) { /* ignore */ }
@@ -466,10 +474,20 @@
   function applyFpsCounter() {
     fpsEl.style.display = settings.fpsCounter ? '' : 'none';
   }
+  function applyEasyMode() {
+    var mode = settings.flightMode || 'ACRO';
+    drone.flightMode = mode;
+    drone.easyMode = (mode !== 'ACRO');
+    const modeEl = document.getElementById('osd-mode');
+    if (modeEl) {
+      modeEl.textContent = (mode === 'ACRO') ? 'ACRO' : ('ANGLE ' + mode);
+    }
+  }
   function applyAllSettings() {
     applyQuality(settings.quality);
     applyFpsCap();
     applyFpsCounter();
+    applyEasyMode();
     applyHudVisibility();
   }
 
@@ -500,6 +518,9 @@
         } else if (setting === 'fpsCounter') {
           settings.fpsCounter = (val === '1');
           applyFpsCounter();
+        } else if (setting === 'flightMode') {
+          settings.flightMode = val;
+          applyEasyMode();
         }
         saveSettings();
         refreshSegmented();
@@ -525,6 +546,7 @@
           if (setting === 'quality') active = (val === settings.quality);
           else if (setting === 'fpsCap') active = (parseInt(val, 10) === settings.fpsCap);
           else if (setting === 'fpsCounter') active = ((val === '1') === settings.fpsCounter);
+          else if (setting === 'flightMode') active = (val === settings.flightMode);
           btn.classList.toggle('active', active);
         });
       });

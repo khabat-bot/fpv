@@ -24,6 +24,9 @@ window.Drone = (function () {
 
     this.armed   = false;
     this.crashed = false;
+    this.easyMode = false;
+    this.flightMode = 'ACRO';
+    this._easyHeading = 0;
     this.colliders = [];
 
     this.mahUsed = 0;
@@ -45,6 +48,14 @@ window.Drone = (function () {
   }
 
   Drone.prototype.getFloorY = function () { return CFG.groundY; };
+
+  /* Return the active preset for the current flightMode.
+     Fallback chain: this.flightMode preset → SPORT → empty. */
+  Drone.prototype._easyPreset = function () {
+    const em = CFG.easyMode || {};
+    const presets = em.presets || {};
+    return presets[this.flightMode] || presets.SPORT || {};
+  };
 
   Drone.prototype.reset = function (x, z) {
     const px = x || 0, pz = z || 0;
@@ -85,11 +96,105 @@ window.Drone = (function () {
     this.throttleIn = thr;
 
     const e = CFG.expo;
-    const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate : 0);
-    const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate : 0);
-    const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate : 0);
+    const easyActive = !!(this.easyMode && this.armed);
 
-    this._target.set(-pRate, -yRate, -rRate);
+    if (easyActive) {
+      /* ===== EASY MODE — self-leveling (angle mode) ==================
+         Stick commands a target tilt angle, not a rotation rate.
+         Centered sticks → error → leveling rate → drone auto-levels.
+         Yaw stays rate-based (with reduced max rate).
+         Sign conventions match acro:
+           +stick pitch → nose down  (negative ω_x)
+           +stick roll  → bank right (negative ω_z)
+           +stick yaw   → same as acro
+         ============================================================== */
+      const em = this._easyPreset();
+      const maxAngle = (em.maxAngleDeg     != null ? em.maxAngleDeg     : 35)  * DEG;
+      const gain     = (CFG.easyMode.levelGain != null ? CFG.easyMode.levelGain : 5.0);
+      const rpScale  = (em.maxRatesScale   != null ? em.maxRatesScale   : 0.75);
+      const yawScale = (em.yawRatesScale   != null ? em.yawRatesScale   : 0.9);
+
+      // Extract heading via SWING-TWIST decomposition around world Y.
+      // This is the mathematically correct way to recover "yaw" from a
+      // tilted quaternion. YXZ Euler decomposition (used previously) mixes
+      // pitch and roll into the yaw value once the drone is tilted — e.g.
+      // a drone at pitch=30deg, yaw=45deg extracts as yaw=49deg with a
+      // spurious roll of 22deg, so the controller builds a target at a
+      // totally different attitude and blows up. Fixed by swing-twist.
+      //
+      //   twist_len = sqrt(q.y^2 + q.w^2)
+      //   heading   = 2 * atan2(q.y, q.w)
+      let heading;
+      const twistLen = Math.sqrt(this.quat.y * this.quat.y + this.quat.w * this.quat.w);
+      if (twistLen < 1e-3) {
+        // Degenerate: quaternion is (nearly) 180deg around some axis in
+        // the XZ plane — the drone is inverted, heading is undefined.
+        // Reuse last known heading so recovery isn't disorienting.
+        heading = this._easyHeading || 0;
+      } else {
+        heading = 2 * Math.atan2(this.quat.y, this.quat.w);
+        this._easyHeading = heading;
+      }
+
+      // Target attitude: heading preserved, pitch/roll from stick.
+      const targetEul = new THREE.Euler(
+        -curve(input.pitch, e) * maxAngle,
+        heading,
+        -curve(input.roll,  e) * maxAngle,
+        'YXZ'
+      );
+      const targetQ = new THREE.Quaternion().setFromEuler(targetEul);
+
+      // Body-frame error quaternion: q_current^-1 * q_target
+      const qErr = this._tmpQ.copy(this.quat).invert().multiply(targetQ);
+
+      // Always take the SHORTEST path. Without this, when the error exceeds
+      // 180deg-equivalent (e.g. an inverted recovery), qErr.w < 0 and the
+      // controller spins the drone the long way around — the "freaks out
+      // spinning" symptom. Negating the quaternion flips to the short arc.
+      if (qErr.w < 0) {
+        qErr.x = -qErr.x;
+        qErr.y = -qErr.y;
+        qErr.z = -qErr.z;
+        qErr.w = -qErr.w;
+      }
+
+      // Body-frame axis-angle → proportional rate toward target.
+      // Ignore qErr.y (yaw error) — heading is preserved by construction.
+      let corrX = 0, corrZ = 0;
+      const halfAngle = Math.acos(Math.max(-1, Math.min(1, qErr.w)));
+      const sinHalf   = Math.sin(halfAngle);
+      if (sinHalf > 1e-3) {
+        const scale = gain * 2 * halfAngle / sinHalf;
+        corrX = qErr.x * scale;
+        corrZ = qErr.z * scale;
+      } else if (halfAngle > 1e-3) {
+        // Near 180° error (inverted recovery) — degenerate axis, fall back.
+        corrX = gain * Math.PI * (qErr.x >= 0 ?  0.5 : -0.5);
+        corrZ = gain * Math.PI * (qErr.z >= 0 ?  0.5 : -0.5);
+      }
+
+      // Clamp leveling rate.
+      const maxR = CFG.maxRates.roll * DEG * rpScale;
+      const mag  = Math.sqrt(corrX * corrX + corrZ * corrZ);
+      if (mag > maxR && mag > 1e-6) {
+        const s = maxR / mag;
+        corrX *= s;
+        corrZ *= s;
+      }
+
+      // Yaw: rate-based, reduced.
+      const yawRate = curve(input.yaw, e) * CFG.maxRates.yaw * DEG * CFG.rcRate * yawScale;
+
+      this._target.set(corrX, -yawRate, corrZ);
+    } else {
+      /* ===== ACRO MODE (existing behaviour, disarm gating preserved) ===== */
+      const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate : 0);
+      const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate : 0);
+      const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate : 0);
+
+      this._target.set(-pRate, -yRate, -rRate);
+    }
 
     const a = this._accel
       .copy(this._target)
@@ -107,15 +212,17 @@ window.Drone = (function () {
     this._wobPhase += dt * Math.PI * 2 * CFG.propWashFreq;
 
     if (thr > 0.03) {
+      const wobScale = easyActive ? 0.4 : 1.0;
       const w = Math.sin(this._wobPhase) * this._wobAmp * thr;
-      a.x += w * 400;
-      a.z += Math.sin(this._wobPhase * 0.73 + 1.7) * this._wobAmp * thr * 320;
-      a.x += Math.sin(this._wobPhase * 2.31) * 2.5 * thr;
-      a.z += Math.cos(this._wobPhase * 1.87) * 2.0 * thr;
+      a.x += w * 400 * wobScale;
+      a.z += Math.sin(this._wobPhase * 0.73 + 1.7) * this._wobAmp * thr * 320 * wobScale;
+      a.x += Math.sin(this._wobPhase * 2.31) * 2.5 * thr * wobScale;
+      a.z += Math.cos(this._wobPhase * 1.87) * 2.0 * thr * wobScale;
     }
 
-    /* ---- motor desync: rapid throttle changes → brief yaw kicks ---- */
-    if (Math.abs(dThr) > 0.2 && thr > 0.3) {
+    /* ---- motor desync: rapid throttle changes → brief yaw kicks ----
+       Skipped in easy mode — the yaw kicks fight the leveling controller. */
+    if (!easyActive && Math.abs(dThr) > 0.2 && thr > 0.3) {
       a.y += (Math.random() - 0.5) * Math.min(1.5, Math.abs(dThr) * 2.0) * 6.0;
     }
 
@@ -123,7 +230,7 @@ window.Drone = (function () {
     const floorHere = this.getFloorY(this.position.x, this.position.z);
     const agl = this.position.y - floorHere;
     if (agl > 0.2 && agl < 2.5 && this.armed) {
-      const eff = (1 - agl / 2.5) * 0.5;
+      const eff = (1 - agl / 2.5) * 0.5 * (easyActive ? 0.3 : 1.0);
       a.x += (Math.random() - 0.5) * eff * 80;
       a.z += (Math.random() - 0.5) * eff * 80;
     }
@@ -142,8 +249,43 @@ window.Drone = (function () {
     this._up.set(0, 1, 0).applyQuaternion(this.quat);
 
     const acc = this._accel;
-    acc.copy(this._up).multiplyScalar(thr * CFG.maxThrust / CFG.mass);
-    acc.y -= CFG.gravity;
+    if (easyActive) {
+      /* ===== EASY MODE — altitude hold =============================
+         Throttle = climb-rate command:
+           0.5  → hold altitude
+           1.0  → climb at maxClimbRate
+           0.0  → descend at maxDescendRate (downward)
+         P controller on vertical-velocity error → required thrust.
+         Thrust is scaled by 1/up.y to cancel the cos(tilt) loss, so
+         tilting forward does not change vertical speed. This is what
+         makes "push forward = go forward" instead of "push forward =
+         climb," which is the DJI-style behaviour.
+         ============================================================ */
+      const em = this._easyPreset();
+      const maxClimb   = em.maxClimbRate   != null ? em.maxClimbRate   : 6.0;
+      const maxDescend = em.maxDescendRate != null ? em.maxDescendRate : 8.0;
+      const altGain    = (CFG.easyMode.altGain != null ? CFG.easyMode.altGain : 3.0);
+
+      const tAbove = Math.max(0, thr - 0.5);
+      const tBelow = Math.max(0, 0.5 - thr);
+      const vzCmd  = tAbove * 2 * maxClimb - tBelow * 2 * maxDescend;
+
+      const vzErr = vzCmd - this.velocity.y;
+      const azCmd = altGain * vzErr;
+
+      // Thrust needed so that (thrust * up.y / mass) - gravity = azCmd.
+      // up.y is clamped to avoid blow-up if momentarily inverted.
+      const upY = Math.max(0.3, this._up.y);
+      const thrustNeeded = (azCmd + CFG.gravity) / upY * CFG.mass;
+      const effThrust = Math.max(0, Math.min(CFG.maxThrust, thrustNeeded));
+
+      acc.copy(this._up).multiplyScalar(effThrust / CFG.mass);
+      acc.y -= CFG.gravity;
+    } else {
+      /* ===== ACRO MODE (unchanged) ==================================== */
+      acc.copy(this._up).multiplyScalar(thr * CFG.maxThrust / CFG.mass);
+      acc.y -= CFG.gravity;
+    }
 
     const speed = this.velocity.length();
     if (speed > 1e-5) {
@@ -152,8 +294,12 @@ window.Drone = (function () {
     }
 
     /* ---- windmill / air-brake drag at low throttle ---- */
-    if (thr < 0.15 && speed > 3) {
-      const windmill = (1 - thr / 0.15) * 0.35;
+    /* Windmill brake — acro only. In easy mode, the alt-hold controller
+       already manages vertical velocity; adding drag here would cause it
+       to fight the controller and slow commanded descents. */
+    if (!easyActive && thr < 0.15 && speed > 3) {
+      const wmCoeff = CFG.windmillBrake != null ? CFG.windmillBrake : 0.15;
+      const windmill = (1 - thr / 0.15) * wmCoeff;
       acc.addScaledVector(this.velocity, -windmill);
     }
 
