@@ -59,7 +59,6 @@
   /* --------------------------- input / hud / racing ------------------ */
   Input.init();
   HUD.init();
-  Racing.init(world, scene);
 
   /* --------------------------- camera rig ---------------------------- */
   const camTilt = new THREE.Quaternion().setFromAxisAngle(
@@ -150,44 +149,6 @@
     }
   }
 
-  /* --------------------------- lap timer ----------------------------- */
-  const ltState = document.querySelector('#lap-timer .lt-state');
-  const ltTime  = document.querySelector('#lap-timer .lt-time');
-  const ltBest  = document.querySelector('#lap-timer .lt-best');
-
-  function fmtLap(ms) {
-    if (!isFinite(ms) || ms <= 0) return '--.-';
-    const s = ms / 1000;
-    if (s < 60) return s.toFixed(1);
-    const m = Math.floor(s / 60);
-    return m + ':' + (s - m * 60).toFixed(1).padStart(4, '0');
-  }
-
-  function updateLapHUD() {
-    const st = Racing.getState();
-    if (!st.active) {
-      ltState.textContent = 'FREE FLIGHT';
-      ltTime.textContent = '';
-      ltBest.textContent = '';
-      return;
-    }
-    const now = performance.now();
-    if (st.started) {
-      ltState.textContent = 'LAP ' + (st.lapCount + 1);
-      ltTime.textContent = fmtLap(st.lapMs);
-      ltBest.textContent = st.gatesThisLap + '/' + st.totalGates +
-                           ' · BEST ' + fmtLap(st.bestMs);
-    } else if (st.lapCompleteAt && now - st.lapCompleteAt < 3000) {
-      ltState.textContent = 'LAP COMPLETE';
-      ltTime.textContent = fmtLap(st.lastLapMs);
-      ltBest.textContent = 'BEST ' + fmtLap(st.bestMs);
-    } else {
-      ltState.textContent = 'READY';
-      ltTime.textContent = '--.-';
-      ltBest.textContent = 'BEST ' + fmtLap(st.bestMs);
-    }
-  }
-
   /* --------------------------- game state ---------------------------- */
   let flightTime = 0;
   let crashShown = false;
@@ -200,7 +161,6 @@
   const mapInput = document.getElementById('map-file');
   const btnResume = document.getElementById('btn-resume');
   const btnForget = document.getElementById('btn-forget');
-  const btnLap = document.getElementById('btn-lap');
   const btnGfx = document.getElementById('btn-gfx');
 
   function updateArmButton() {
@@ -221,7 +181,6 @@
     flightTime = 0;
     crashShown = false;
     HUD.showCrash(false);
-    Racing.reset();
     updateArmButton();
   }
 
@@ -246,26 +205,27 @@
   });
   btnSound.classList.add('on');
 
-  btnLap.addEventListener('click', () => {
-    Racing.reset();
-  });
 
   /* -------------------- quality toggle ------------------- */
   const gfxOrder = ['LOW', 'MED', 'HIGH'];
   function applyQuality(name) {
     qualityName = name;
-    btnGfx.textContent = 'GFX: ' + name;
     setDPRCap(QUALITY[name].dpr);
     document.body.classList.toggle('gfx-low', name === 'LOW');
-    btnGfx.classList.remove('on', 'off');
-    btnGfx.classList.add(name === 'HIGH' ? 'on' : 'off');
+    if (btnGfx) {
+      btnGfx.textContent = 'GFX: ' + name;
+      btnGfx.classList.remove('on', 'off');
+      btnGfx.classList.add(name === 'HIGH' ? 'on' : 'off');
+    }
   }
   applyQuality(qualityName);
 
-  btnGfx.addEventListener('click', () => {
-    const i = gfxOrder.indexOf(qualityName);
-    applyQuality(gfxOrder[(i + 1) % gfxOrder.length]);
-  });
+  if (btnGfx) {
+    btnGfx.addEventListener('click', () => {
+      const i = gfxOrder.indexOf(qualityName);
+      applyQuality(gfxOrder[(i + 1) % gfxOrder.length]);
+    });
+  }
 
   /* -------------------- IndexedDB persistence ------------------- */
   const IDB_NAME = 'fpv-sim';
@@ -381,7 +341,6 @@
       window.__world = world;
       drone.colliders = result.colliders;
       drone.colliderIndex = result.colliderIndex;
-      Racing.init(world, scene);
 
       /* re-evaluate DPR based on merged mesh count */
       if (result.meshCount > 2000) setDPRCap(1.0);
@@ -411,6 +370,8 @@
         btnForget.style.display = '';
       }
 
+      var _sp = document.getElementById('settings-panel');
+      if (_sp) _sp.classList.add('hidden');
       console.log('DPR ' + renderer.getPixelRatio().toFixed(2) +
                   ', ' + result.meshCount + ' meshes, ' +
                   result.colliders.length + ' colliders');
@@ -453,6 +414,149 @@
 
   updateArmButton();
 
+  /* -------------------- settings panel ------------------- */
+  const SETTINGS_KEY = 'fpv-settings-v1';
+  const settings = {
+    quality: qualityName,
+    fpsCap: 0,
+    fpsCounter: true,
+    hud: {
+      crosshair: true, mode: true, arm: true, batt: true,
+      time: true, spd: true, alt: true, thr: true
+    }
+  };
+  let fpsCap = 0;
+
+  function loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return;
+      const s = JSON.parse(raw);
+      if (s && typeof s === 'object') {
+        if (s.quality && QUALITY[s.quality]) settings.quality = s.quality;
+        if (typeof s.fpsCap === 'number') settings.fpsCap = s.fpsCap;
+        if (typeof s.fpsCounter === 'boolean') settings.fpsCounter = s.fpsCounter;
+        if (s.hud && typeof s.hud === 'object') Object.assign(settings.hud, s.hud);
+      }
+    } catch (e) { /* ignore */ }
+  }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) {}
+  }
+
+  const HUD_ELS = {
+    crosshair: function () { return document.getElementById('crosshair'); },
+    mode:  function () { return document.getElementById('osd-row-mode'); },
+    arm:   function () { return document.getElementById('osd-row-arm'); },
+    batt:  function () { return document.getElementById('osd-row-batt'); },
+    time:  function () { return document.getElementById('osd-row-time'); },
+    spd:   function () { return document.getElementById('osd-row-spd'); },
+    alt:   function () { return document.getElementById('osd-row-alt'); },
+    thr:   function () { return document.getElementById('osd-bc'); }
+  };
+
+  function applyHudVisibility() {
+    for (const key in HUD_ELS) {
+      const el = HUD_ELS[key]();
+      if (!el) continue;
+      el.classList.toggle('hud-off', !settings.hud[key]);
+    }
+  }
+  function applyFpsCap() { fpsCap = settings.fpsCap; }
+  function applyFpsCounter() {
+    fpsEl.style.display = settings.fpsCounter ? '' : 'none';
+  }
+  function applyAllSettings() {
+    applyQuality(settings.quality);
+    applyFpsCap();
+    applyFpsCounter();
+    applyHudVisibility();
+  }
+
+  function buildSettingsPanel() {
+    const panel = document.getElementById('settings-panel');
+    if (!panel) { console.warn('settings-panel missing in HTML'); return; }
+
+    panel.addEventListener('click', function (e) {
+      if (e.target === panel) panel.classList.add('hidden');
+    });
+    var closeBtn = panel.querySelector('#sp-close');
+    if (closeBtn) closeBtn.addEventListener('click', function () {
+      panel.classList.add('hidden');
+    });
+
+    panel.querySelectorAll('.sp-group').forEach(function (group) {
+      group.addEventListener('click', function (e) {
+        var btn = e.target.closest('.sp-opt');
+        if (!btn) return;
+        var setting = group.getAttribute('data-setting');
+        var val = btn.getAttribute('data-val');
+        if (setting === 'quality') {
+          settings.quality = val;
+          applyQuality(val);
+        } else if (setting === 'fpsCap') {
+          settings.fpsCap = parseInt(val, 10);
+          applyFpsCap();
+        } else if (setting === 'fpsCounter') {
+          settings.fpsCounter = (val === '1');
+          applyFpsCounter();
+        }
+        saveSettings();
+        refreshSegmented();
+      });
+    });
+
+    panel.querySelectorAll('.sp-row[data-toggle]').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var key = row.getAttribute('data-toggle');
+        settings.hud[key] = !settings.hud[key];
+        applyHudVisibility();
+        saveSettings();
+        refreshSegmented();
+      });
+    });
+
+    function refreshSegmented() {
+      panel.querySelectorAll('.sp-group').forEach(function (group) {
+        var setting = group.getAttribute('data-setting');
+        group.querySelectorAll('.sp-opt').forEach(function (btn) {
+          var val = btn.getAttribute('data-val');
+          var active = false;
+          if (setting === 'quality') active = (val === settings.quality);
+          else if (setting === 'fpsCap') active = (parseInt(val, 10) === settings.fpsCap);
+          else if (setting === 'fpsCounter') active = ((val === '1') === settings.fpsCounter);
+          btn.classList.toggle('active', active);
+        });
+      });
+      panel.querySelectorAll('.sp-row[data-toggle]').forEach(function (row) {
+        var key = row.getAttribute('data-toggle');
+        row.classList.toggle('sp-on', !!settings.hud[key]);
+      });
+    }
+
+    refreshSegmented();
+
+    var btnSettings = document.getElementById('btn-settings');
+    if (btnSettings) {
+      btnSettings.addEventListener('click', function () {
+        refreshSegmented();
+        panel.classList.remove('hidden');
+      });
+    }
+  }
+
+  loadSettings();
+  buildSettingsPanel();
+  applyAllSettings();
+
+  /* keep settings.quality in sync when GFX button cycles */
+  if (btnGfx) {
+    btnGfx.addEventListener('click', function () {
+      settings.quality = qualityName;
+      saveSettings();
+    });
+  }
+
   /* ============================ main loop ============================= */
   const PHYSICS_HZ = isMobile ? 120 : 240;
   const FIXED = 1 / PHYSICS_HZ;
@@ -460,6 +564,11 @@
 
   function frame(now) {
     requestAnimationFrame(frame);
+
+    if (fpsCap > 0) {
+      const _el = now - lastTime;
+      if (_el < (1000 / fpsCap) - 1.5) return;
+    }
 
     let dt = (now - lastTime) / 1000;
     lastTime = now;
@@ -481,7 +590,6 @@
 
     if (drone.armed && !drone.crashed) flightTime += dt;
 
-    Racing.update(dt, drone);
 
     tmpV.copy(camOffsetLocal).applyQuaternion(drone.quat);
     camera.position.copy(drone.position).add(tmpV);
@@ -495,7 +603,6 @@
     }
 
     HUD.update(drone, camera, flightTime, state.throttle);
-    updateLapHUD();
     Audio.update(drone, state.throttle);
 
     if (drone.crashed && !crashShown) {

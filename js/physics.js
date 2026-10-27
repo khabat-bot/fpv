@@ -85,9 +85,9 @@ window.Drone = (function () {
     this.throttleIn = thr;
 
     const e = CFG.expo;
-    const rRate = curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate;
-    const pRate = curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate;
-    const yRate = curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate;
+    const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate : 0);
+    const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate : 0);
+    const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate : 0);
 
     this._target.set(-pRate, -yRate, -rRate);
 

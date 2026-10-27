@@ -415,20 +415,153 @@ body {
 }
 body.gfx-low #vignette { opacity: 0; }
 
-/* ------------------------ compact button grid ------------------------- */
+/* ------------------------ vertical button stack ----------------------- */
 #buttons {
-  display: grid !important;
-  grid-template-columns: 1fr 1fr;
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
-  max-width: 210px;
 }
 #buttons .btn {
-  padding: 8px 10px;
+  padding: 9px 14px;
   font-size: 11px;
-  min-width: 0;
+  min-width: 100px;
+  text-align: center;
 }
 #buttons .btn.tiny {
-  padding: 7px 8px;
-  font-size: 9px;
-  min-width: 0;
+  padding: 8px 12px;
+  font-size: 10px;
+  min-width: 100px;
+  text-align: center;
+}
+
+/* --------------------------- settings panel --------------------------- */
+#settings-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 5, 15, 0.78);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+#settings-panel.hidden { display: none; }
+
+.sp-inner {
+  background: rgba(8, 18, 30, 0.94);
+  border: 1px solid rgba(140, 200, 255, 0.35);
+  border-radius: 12px;
+  padding: 16px 20px;
+  max-width: 440px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  color: var(--osd);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+}
+
+.sp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(140, 200, 255, 0.2);
+}
+.sp-close {
+  cursor: pointer;
+  padding: 4px 10px;
+  opacity: 0.7;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sp-close:active { opacity: 1; }
+
+.sp-section { margin-bottom: 14px; }
+.sp-title {
+  font-size: 10px;
+  color: var(--osd-dim);
+  letter-spacing: 0.14em;
+  margin-bottom: 6px;
+}
+
+.sp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px dashed rgba(140, 200, 255, 0.08);
+  gap: 10px;
+}
+.sp-row:last-child { border-bottom: none; }
+.sp-lbl { color: var(--osd); flex: none; min-width: 100px; }
+
+.sp-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.sp-opt {
+  font-family: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  padding: 5px 10px;
+  min-width: 36px;
+  color: var(--osd);
+  background: var(--btn-bg);
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sp-opt.active {
+  background: rgba(40, 200, 110, 0.30);
+  border-color: rgba(110, 242, 160, 0.9);
+  color: #b6ffd0;
+}
+
+.sp-row[data-toggle] {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.sp-row[data-toggle]::after {
+  content: 'OFF';
+  font-size: 10px;
+  color: #ff9d9d;
+  letter-spacing: 0.1em;
+}
+.sp-row[data-toggle].sp-on::after {
+  content: 'ON';
+  color: #8dffb0;
+}
+
+.hud-off { display: none !important; }
+
+/* toggle state for moved buttons (spring / sound / map) */
+.sp-opt.on {
+  background: rgba(40, 200, 110, 0.30);
+  border-color: rgba(110, 242, 160, 0.9);
+  color: #b6ffd0;
+}
+.sp-opt.off {
+  background: rgba(120, 40, 40, 0.30);
+  border-color: rgba(255, 130, 130, 0.6);
+  color: #ffb8b8;
+}
+.sp-opt.wide {
+  width: 100%;
+  text-align: center;
+  padding: 9px 12px;
 }

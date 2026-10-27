@@ -23,15 +23,15 @@
   <div id="crosshair"><span></span></div>
 
   <div class="osd osd-tl">
-    <div class="row"><span class="lbl">MODE</span><span class="val" id="osd-mode">ACRO</span></div>
-    <div class="row"><span class="lbl">ARM</span><span class="val" id="osd-arm">DISARMED</span></div>
-    <div class="row"><span class="lbl">BATT</span><span class="val" id="osd-volt">25.2V</span><span class="val dim" id="osd-mah">0mAh</span></div>
-    <div class="row"><span class="lbl">TIME</span><span class="val" id="osd-timer">00:00</span></div>
-    <div class="row"><span class="lbl">SPD</span><span class="val" id="osd-speed">0 km/h</span></div>
-    <div class="row"><span class="lbl">ALT</span><span class="val" id="osd-alt">0.0 m</span></div>
+    <div class="row" id="osd-row-mode"><span class="lbl">MODE</span><span class="val" id="osd-mode">ACRO</span></div>
+    <div class="row" id="osd-row-arm"><span class="lbl">ARM</span><span class="val" id="osd-arm">DISARMED</span></div>
+    <div class="row" id="osd-row-batt"><span class="lbl">BATT</span><span class="val" id="osd-volt">25.2V</span><span class="val dim" id="osd-mah">0mAh</span></div>
+    <div class="row" id="osd-row-time"><span class="lbl">TIME</span><span class="val" id="osd-timer">00:00</span></div>
+    <div class="row" id="osd-row-spd"><span class="lbl">SPD</span><span class="val" id="osd-speed">0 km/h</span></div>
+    <div class="row" id="osd-row-alt"><span class="lbl">ALT</span><span class="val" id="osd-alt">0.0 m</span></div>
   </div>
 
-  <div class="osd osd-bc">
+  <div class="osd osd-bc" id="osd-bc">
     <div class="thr-wrap">
       <div class="thr-bar"><div class="thr-fill" id="thr-fill"></div></div>
       <div class="thr-txt" id="osd-thr">THR 0%</div>
@@ -43,13 +43,9 @@
 <div id="buttons">
   <button id="btn-arm"    class="btn">ARM</button>
   <button id="btn-reset"  class="btn">RESET</button>
-  <button id="btn-spring" class="btn tiny">THR: HOLD</button>
-  <button id="btn-sound"  class="btn tiny">SND: ON</button>
-  <button id="btn-map"    class="btn tiny">LOAD MAP</button>
   <button id="btn-resume" class="btn tiny" style="display:none">RESUME</button>
   <button id="btn-forget" class="btn tiny" style="display:none">FORGET</button>
-  <button id="btn-lap"    class="btn tiny">LAP RESET</button>
-  <button id="btn-gfx"    class="btn tiny">GFX: MED</button>
+  <button id="btn-settings" class="btn tiny">SETTINGS</button>
 </div>
 
 <!-- ======================= JOYSTICKS ========================= -->
@@ -63,11 +59,6 @@
 </div>
 
 <!-- ======================= CRASH OVERLAY ===================== -->
-<div id="lap-timer">
-  <div class="lt-state">READY</div>
-  <div class="lt-time">--.-</div>
-  <div class="lt-best">BEST --.-</div>
-</div>
 <div id="vignette"></div>
 
 <div id="crash" class="hidden">
@@ -84,6 +75,72 @@
 </div>
 
 <!-- Three.js (UMD build — works from file:// as well as http://) -->
+<!-- ======================= SETTINGS ========================== -->
+<div id="settings-panel" class="hidden">
+  <div class="sp-inner">
+    <div class="sp-header">
+      <span>SETTINGS</span>
+      <span class="sp-close" id="sp-close">&#x2715;</span>
+    </div>
+    <div class="sp-section">
+      <div class="sp-title">RENDERING</div>
+      <div class="sp-row">
+        <span class="sp-lbl">Quality</span>
+        <div class="sp-group" data-setting="quality">
+          <button class="sp-opt" data-val="LOW">LOW</button>
+          <button class="sp-opt" data-val="MED">MED</button>
+          <button class="sp-opt" data-val="HIGH">HIGH</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">FPS Cap</span>
+        <div class="sp-group" data-setting="fpsCap">
+          <button class="sp-opt" data-val="0">&#x221e;</button>
+          <button class="sp-opt" data-val="120">120</button>
+          <button class="sp-opt" data-val="90">90</button>
+          <button class="sp-opt" data-val="60">60</button>
+          <button class="sp-opt" data-val="30">30</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">FPS Counter</span>
+        <div class="sp-group" data-setting="fpsCounter">
+          <button class="sp-opt" data-val="1">SHOW</button>
+          <button class="sp-opt" data-val="0">HIDE</button>
+        </div>
+      </div>
+    </div>
+    <div class="sp-section">
+      <div class="sp-title">INPUT</div>
+      <div class="sp-row">
+        <span class="sp-lbl">Throttle</span>
+        <button id="btn-spring" class="sp-opt">THR: HOLD</button>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Sound</span>
+        <button id="btn-sound" class="sp-opt on">SND: ON</button>
+      </div>
+    </div>
+    <div class="sp-section">
+      <div class="sp-title">MAP</div>
+      <div class="sp-row">
+        <button id="btn-map" class="sp-opt wide">LOAD MAP</button>
+      </div>
+    </div>
+    <div class="sp-section">
+      <div class="sp-title">HUD</div>
+      <div class="sp-row" data-toggle="crosshair">Crosshair</div>
+      <div class="sp-row" data-toggle="mode">MODE</div>
+      <div class="sp-row" data-toggle="arm">ARM</div>
+      <div class="sp-row" data-toggle="batt">BATT</div>
+      <div class="sp-row" data-toggle="time">TIME</div>
+      <div class="sp-row" data-toggle="spd">SPD</div>
+      <div class="sp-row" data-toggle="alt">ALT</div>
+      <div class="sp-row" data-toggle="thr">Throttle Bar</div>
+    </div>
+  </div>
+</div>
+
 <input id="map-file" type="file" accept=".glb,.gltf" style="display:none" />
 <!-- Multi-CDN Three.js bootstrap + on-screen error reporting -->
 <script>
