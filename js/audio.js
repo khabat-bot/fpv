@@ -15,6 +15,7 @@ window.Audio = (function () {
   let muted = false;
   let _prevThrottle = 0;
   let _lowBattLast = -10;
+  let _lastSoundLoadoutKey = null;
 
   /* safe() — returns fallback if v is not a finite number.
      Web Audio's setTargetAtTime throws "the provided value is non
@@ -143,8 +144,56 @@ window.Audio = (function () {
     /* throttle is now guaranteed in [0,1], so Math.pow is safe.
        All setTargetAtTime args additionally wrapped in safe() as a
        final defence — no path can hand NaN to Web Audio. */
+    /* ---- Loadout-derived sound parameters ----
+       Reads __loadout.effective.thrustInfo (populated by parts.js on
+       every loadout change) to derive sound character from the actual
+       motor RPM + prop geometry produced by computeMotorThrust().
+       Falls back to hardcoded 5"-baseline values if the loadout system
+       is missing or fails — audio always works. Every value that
+       reaches Web Audio is still wrapped in safe() at the call site. */
+    let _bpfIdle = 130, _bpfPeak = 800;         /* blade-pass range */
+    let _osc2Ratio = 2.02;                       /* pole pairs / blades */
+    let _motorFilterMax = 3900;                  /* lowpass ceiling */
+    let _washBase = 250, _washPeak = 1800;       /* prop wash range */
+    let _bladeCount = 3, _diameterIn = 5.1;
+    let _elecPeak = 1600;                        /* electrical slot freq */
+    if (window.__loadout && __loadout.effective && __loadout.effective.thrustInfo
+        && window.PARTS && PARTS.PROPS) {
+      try {
+        const _ti = __loadout.effective.thrustInfo;
+        const _prop = PARTS.PROPS[__loadout.props];
+        if (_prop) {
+          _bladeCount = _prop.blades     != null ? _prop.blades     : 3;
+          _diameterIn = _prop.diameterIn != null ? _prop.diameterIn : 5.1;
+        }
+        const _rpmPeak = safe(_ti.rpm, 29880);
+        _bpfPeak        = (_rpmPeak / 60) * _bladeCount;
+        _bpfIdle        = _bpfPeak * 0.10;
+        _osc2Ratio      = 7 / _bladeCount;
+        _elecPeak       = (_rpmPeak / 60) * 7;
+        _motorFilterMax = Math.max(_bpfPeak, _elecPeak) * 1.3;
+        const _dScale   = Math.pow(5.1 / _diameterIn, 0.7);
+        _washBase       = 250  * _dScale;
+        _washPeak       = 1800 * _dScale;
+      } catch (e) { /* keep defaults */ }
+    }
+
+    /* Once-per-loadout-change diagnostic */
+    if (window.__loadout) {
+      const _sKey = (__loadout.frame || '?') + '/' + (__loadout.motors || '?')
+                  + '/' + (__loadout.props || '?') + '/' + (__loadout.battery || '?');
+      if (_sKey !== _lastSoundLoadoutKey) {
+        _lastSoundLoadoutKey = _sKey;
+        console.log('[Audio] loadout sound:', __loadout.frame + '/' + __loadout.props,
+                    '-> BPF', Math.round(_bpfIdle) + '-' + Math.round(_bpfPeak) + ' Hz',
+                    ', elec', Math.round(_elecPeak) + ' Hz',
+                    ', wash', Math.round(_washBase) + '-' + Math.round(_washPeak) + ' Hz');
+      }
+    }
+
+    const _bpfRange = Math.max(1, _bpfPeak - _bpfIdle);
     const baseFreq = armed
-      ? 130 + Math.pow(throttle, 0.85) * 670
+      ? _bpfIdle + Math.pow(throttle, 0.85) * _bpfRange
       : 65;
 
     const wobble = 1 + Math.sin(t * 7.3) * 0.006 + Math.sin(t * 3.1) * 0.010;
@@ -157,10 +206,19 @@ window.Audio = (function () {
 
     const finalFreq = safe(baseFreq * wobble * warble, 130);
 
-    motorOsc1.frequency.setTargetAtTime(safe(finalFreq,        130), t, 0.06);
-    motorOsc2.frequency.setTargetAtTime(safe(finalFreq * 2.02, 260), t, 0.06);
+    motorOsc1.frequency.setTargetAtTime(safe(finalFreq, 130), t, 0.06);
+    /* osc2 = electrical slot frequency. Ratio relative to BPF equals
+       pole pairs / blades, so it auto-tracks blade count: 7/3 = 2.33
+       for 3-blade, 7/2 = 3.5 for bi-blade, 7/4 = 1.75 for 4-blade.
+       Capped at 20 kHz to stay safely below Nyquist. */
+    const _osc2Freq = Math.min(20000, finalFreq * _osc2Ratio);
+    motorOsc2.frequency.setTargetAtTime(safe(_osc2Freq, 260), t, 0.06);
 
-    motorFilter.frequency.setTargetAtTime(safe(400 + throttle * 3500, 400), t, 0.08);
+    /* Lowpass ceiling scales with the higher of BPF peak and electrical
+       peak. Idle cutoff stays at 400 Hz so the (low) idle whine is not
+       attenuated — that's the idle motor hum. */
+    motorFilter.frequency.setTargetAtTime(
+      safe(400 + throttle * (_motorFilterMax - 400), 400), t, 0.08);
 
     const motorLevel = safe(armed ? (0.05 + throttle * 0.22) : 0, 0);
     motorGain.gain.setTargetAtTime(motorLevel, t, 0.08);
@@ -200,8 +258,14 @@ window.Audio = (function () {
       ? Math.min(0.22, deltaThr * 0.90 + throttle * 0.03)
       : 0, 0);
     washGain.gain.setTargetAtTime(washLevel, t, 0.05);
+    /* Prop-wash center freq scales inversely with prop diameter:
+       bigger props → deeper thump, small props → sharper snap. The
+       deltaThr multiplier scales so a full punch reaches _washPeak
+       in one stroke for every diameter. */
+    const _washScale = _washPeak / 1800;
     washFilter.frequency.setTargetAtTime(
-      safe(250 + Math.min(1550, deltaThr * 4000), 250), t, 0.05);
+      safe(_washBase + Math.min(_washPeak - _washBase, deltaThr * 4000 * _washScale),
+           _washBase), t, 0.05);
 
     if (armed && t - _lowBattLast > 1.6) {
       const vPerCell = drone.voltage / CFG.battery.cells;

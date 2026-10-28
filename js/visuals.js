@@ -1,22 +1,39 @@
 /* =========================================================================
-   visuals.js — RACING-QUAD v2
-   Visible quad model built from Three.js primitives.
-   Follows physics drone.position / drone.quat every frame.
-   API: build(scene), update(drone, throttle, dt), setVisible(v), setFPVMode(on)
+   visuals.js — RACING-QUAD v3 (multi-instance)
+
+   API:
+     DroneVisual.createInstance(scene) -> {
+       group, update(drone,state,dt), setLoadout(loadout),
+       setFPVMode(on), setVisible(v), dispose()
+     }
+
+   Backwards-compat module shims (used by main.js as before):
+     DroneVisual.build(scene)          // creates the main instance
+     DroneVisual.update(drone,state,dt)
+     DroneVisual.setLoadout(loadout)
+     DroneVisual.setFPVMode(on)
+     DroneVisual.setVisible(v)
+
+   setLoadout affects:
+     - group.scale   (frame size class)
+     - accentMat     (frame accent stripe color)
+     - bellMat       (motor bell color coded by KV)
+     - propTipMat    (prop tip color coded by prop type)
+     - battMesh Z-scale (battery pack length coded by capacity)
+
+   Both the in-game drone and the LOADOUT-tab preview use setLoadout(), so
+   the visuals stay in lockstep.
    ========================================================================= */
 'use strict';
 
 window.DroneVisual = (function () {
-  let group = null;
-  const props = [];        // { group, disc, dir }
-  let ledFrontMat = null;
-  let ledRearMat = null;
-  let _ledState = null;
 
-  function build(scene) {
-    if (group) return group;
-    group = new THREE.Group();
+  function createInstance(scene) {
+    const group = new THREE.Group();
     group.name = 'drone-visual';
+
+    const props = [];
+    let _ledState = null;
 
     /* ---------- materials ---------- */
     const carbonMat   = new THREE.MeshLambertMaterial({ color: 0x121418 });
@@ -30,8 +47,8 @@ window.DroneVisual = (function () {
     const lensMat     = new THREE.MeshLambertMaterial({ color: 0x0a1a2e });
     const camHouseMat = new THREE.MeshLambertMaterial({ color: 0x101216 });
 
-    ledFrontMat = new THREE.MeshBasicMaterial({ color: 0x0a1a0a });
-    ledRearMat  = new THREE.MeshBasicMaterial({ color: 0x1a0a0a });
+    const ledFrontMat = new THREE.MeshBasicMaterial({ color: 0x0a1a0a });
+    const ledRearMat  = new THREE.MeshBasicMaterial({ color: 0x1a0a0a });
 
     /* ---------- body: stacked carbon plates ---------- */
     const bottomPlate = new THREE.Mesh(
@@ -49,17 +66,16 @@ window.DroneVisual = (function () {
     topPlate.position.y = 0.026;
     group.add(topPlate);
 
-    /* accent stripe on top plate */
     const topStripe = new THREE.Mesh(
       new THREE.BoxGeometry(0.006, 0.006, 0.090), accentMat);
     topStripe.position.set(0.020, 0.026, 0);
     group.add(topStripe);
 
-    /* battery */
-    const batt = new THREE.Mesh(
+    /* battery — Z-scale in setLoadout */
+    const battMesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.054, 0.024, 0.078), carbon2Mat);
-    batt.position.set(0, 0.040, -0.004);
-    group.add(batt);
+    battMesh.position.set(0, 0.040, -0.004);
+    group.add(battMesh);
 
     /* ---------- arms ---------- */
     const armReach = 0.105;
@@ -184,94 +200,159 @@ window.DroneVisual = (function () {
     ledRear.position.set(0, 0.005, -0.055);
     group.add(ledRear);
 
-    /* ---------- tag all (BVH skips /drone/i by name) ---------- */
+    /* tag all (BVH skips /drone/i by name) */
     group.traverse(function (o) {
       if (o.isMesh) o.name = 'drone-visual-part';
     });
 
-    scene.add(group);
-    return group;
-  }
+    /* ---------------- update ---------------- */
+    function update(drone, state, dt) {
+      if (!group) return;
+      group.position.copy(drone.position);
+      group.quaternion.copy(drone.quat);
 
-  function update(drone, state, dt) {
-    if (!group) return;
-    group.position.copy(drone.position);
-    group.quaternion.copy(drone.quat);
+      const t = Math.max(0, Math.min(1, (state && state.throttle) || 0));
+      const armed = !!drone.armed;
+      const pitchIn = (state && state.pitch) || 0;
+      const rollIn  = (state && state.roll)  || 0;
+      const yawIn   = (state && state.yaw)   || 0;
 
-    const t = Math.max(0, Math.min(1, (state && state.throttle) || 0));
-    const armed = !!drone.armed;
-    const pitchIn = (state && state.pitch) || 0;
-    const rollIn  = (state && state.roll)  || 0;
-    const yawIn   = (state && state.yaw)   || 0;
+      if (armed) {
+        const baseRate = t * 40 + 10;
+        const DIFF = 20;
+        for (let i = 0; i < props.length; i++) {
+          const p = props[i];
+          let delta = 0;
+          delta += pitchIn * p.sz * DIFF;
+          delta -= rollIn  * p.sx * DIFF;
+          delta += yawIn   * p.sx * p.sz * DIFF * 0.5;
+          const rate = Math.max(0, baseRate + delta);
+          p.phase += rate * dt;
+          if (p.phase > Math.PI * 2) p.phase -= Math.PI * 2;
+          p.group.rotation.y = p.phase * p.dir;
+        }
+      }
 
-    /* Per-motor RPM differential — visible spin asymmetry.
-       Base rate ramps from idle (armed-at-zero still spins — real
-       quads idle at ~10% with zero throttle). Stick inputs add a
-       per-motor delta:
-         pitch → nose-down: front slows, rear speeds up
-         roll  → bank-right: right slows, left speeds up
-         yaw   → diagonal pairs go opposite
-       DIFF=6 keeps front/rear visibly different without stalling
-       any motor at idle full stick (idle 10 - 6 = 4). */
-    if (armed) {
-      const baseRate = t * 40 + 10;
-      const DIFF = 20;
-      for (let i = 0; i < props.length; i++) {
-        const p = props[i];
-        let delta = 0;
-        delta += pitchIn * p.sz * DIFF;
-        delta -= rollIn  * p.sx * DIFF;
-        delta += yawIn   * p.sx * p.sz * DIFF * 0.5;
-        const rate = Math.max(0, baseRate + delta);
-        p.phase += rate * dt;
-        if (p.phase > Math.PI * 2) p.phase -= Math.PI * 2;
-        p.group.rotation.y = p.phase * p.dir;
+      let ledState;
+      if (drone.crashed) ledState = 'crash';
+      else if (armed)    ledState = 'armed';
+      else               ledState = 'off';
+
+      if (ledState === 'crash') {
+        const flash = Math.sin(performance.now() * 0.02) * 0.5 + 0.5;
+        const c = 0.3 + flash * 0.7;
+        ledFrontMat.color.setRGB(c, 0.05, 0.05);
+        ledRearMat.color.setRGB(c, 0.05, 0.05);
+      } else if (ledState !== _ledState) {
+        if (ledState === 'off') {
+          ledFrontMat.color.setHex(0x0a1a0a);
+          ledRearMat.color.setHex(0x1a0a0a);
+        } else {
+          ledFrontMat.color.setHex(0x30ff60);
+          ledRearMat.color.setHex(0xff2020);
+        }
+      }
+      _ledState = ledState;
+    }
+
+    /* ---------------- setLoadout ---------------- */
+    function setLoadout(loadout) {
+      if (!window.PARTS || !loadout) return;
+      const F = PARTS.FRAMES, M = PARTS.MOTORS, P = PARTS.PROPS, B = PARTS.BATTERY;
+      const frame   = F[loadout.frame];
+      const motor   = M[loadout.motors];
+      const prop    = P[loadout.props];
+      const battery = B[loadout.battery];
+
+      /* Frame → scale + accent color */
+      if (frame) {
+        group.scale.setScalar(typeof frame.scale === 'number' ? frame.scale : 1.0);
+        if (typeof frame.accent === 'number') accentMat.color.setHex(frame.accent);
+      }
+
+      /* Motor → bell color by KV */
+      if (motor) {
+        const kv = motor.kv || 1800;
+        if      (kv >= 10000) bellMat.color.setHex(0xc060ff); /* micro 19000  - purple */
+        else if (kv >= 3000)  bellMat.color.setHex(0xe0e0e0); /* micro 3800   - silver */
+        else if (kv >= 2200)  bellMat.color.setHex(0xff2020); /* 2400-2750    - hot red */
+        else if (kv >= 1500)  bellMat.color.setHex(0xff8a20); /* 1700-1800    - orange */
+        else                  bellMat.color.setHex(0xd06010); /* 1300         - dark orange */
+      }
+
+      /* Prop → tip color by type */
+      if (prop) {
+        const pid = loadout.props;
+        let tipCol = 0xff7a1a;
+        if      (pid === 'race_5143_3')      tipCol = 0xff2020;  /* red */
+        else if (pid === 'low_pitch_5130')   tipCol = 0x40ff60;  /* green */
+        else if (pid === 'high_pitch_5152')  tipCol = 0xa040ff;  /* purple */
+        else if (pid === 'biblade_5145_2')   tipCol = 0x40c0ff;  /* cyan */
+        else if (pid === 'race_7x35')        tipCol = 0x80ff40;  /* lime */
+        else if (pid === 'cine_3x3')         tipCol = 0xffffff;  /* white */
+        else if (pid === 'tiny_2x2')         tipCol = 0xff60ff;  /* pink */
+        propTipMat.color.setHex(tipCol);
+      }
+
+      /* Battery → pack length (Z) by capacity */
+      if (battery && battMesh) {
+        const cap = battery.capacityMah || 1300;
+        const lenScale = Math.max(0.55, Math.min(1.55, cap / 1300));
+        battMesh.scale.set(1.0, 1.0, lenScale);
       }
     }
 
-
-    /* LED state: off / armed / crash-flash */
-    let ledState;
-    if (drone.crashed)  ledState = 'crash';
-    else if (armed)     ledState = 'armed';
-    else                ledState = 'off';
-
-    if (ledState === 'crash') {
-      const flash = Math.sin(performance.now() * 0.02) * 0.5 + 0.5;
-      const c = 0.3 + flash * 0.7;
-      ledFrontMat.color.setRGB(c, 0.05, 0.05);
-      ledRearMat.color.setRGB(c, 0.05, 0.05);
-    } else if (ledState !== _ledState) {
-      if (ledState === 'off') {
-        ledFrontMat.color.setHex(0x0a1a0a);
-        ledRearMat.color.setHex(0x1a0a0a);
-      } else {
-        ledFrontMat.color.setHex(0x30ff60);
-        ledRearMat.color.setHex(0xff2020);
+    /* ---------------- setFPVMode ---------------- */
+    function setFPVMode(on) {
+      if (!group) return;
+      group.visible = !on;
+      if (!on) {
+        group.traverse(function (o) {
+          if (o.isMesh && o.name === 'drone-visual-part') o.visible = true;
+        });
       }
     }
-    _ledState = ledState;
-  }
 
-  function setVisible(v) {
-    if (group) group.visible = v;
-  }
+    /* ---------------- setVisible ---------------- */
+    function setVisible(v) {
+      if (group) group.visible = v;
+    }
 
-  function setFPVMode(on) {
-    if (!group) return;
-    /* FPV: hide the entire drone group — clean view, no strobing blades. */
-    group.visible = !on;
-    if (!on) {
+    /* ---------------- dispose ---------------- */
+    function dispose() {
+      scene.remove(group);
       group.traverse(function (o) {
-        if (o.isMesh && o.name === 'drone-visual-part') o.visible = true;
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach(function (m) { m.dispose(); });
+          else o.material.dispose();
+        }
       });
     }
+
+    scene.add(group);
+    return { group, update, setLoadout, setFPVMode, setVisible, dispose };
   }
 
+  /* ---- module-scope singleton shim (backwards compat with main.js) ---- */
+  let _main = null;
+
+  function build(scene) {
+    if (_main) return _main.group;
+    _main = createInstance(scene);
+    return _main.group;
+  }
+  function update(drone, state, dt) { if (_main) _main.update(drone, state, dt); }
+  function setLoadout(loadout) { if (_main) _main.setLoadout(loadout); }
+  function setFPVMode(on) { if (_main) _main.setFPVMode(on); }
+  function setVisible(v) { if (_main) _main.setVisible(v); }
+
   return {
+    createInstance: createInstance,
     build: build,
     update: update,
-    setVisible: setVisible,
-    setFPVMode: setFPVMode
+    setLoadout: setLoadout,
+    setFPVMode: setFPVMode,
+    setVisible: setVisible
   };
 })();

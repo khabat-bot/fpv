@@ -912,3 +912,407 @@ body.gfx-low #vignette { opacity: 0; }
 .osd-bc {
   bottom: calc(8px + env(safe-area-inset-bottom));
 }
+
+
+/* ============================================================
+   Loadout summary (appended — additive)
+   ============================================================ */
+.sp-loadout-summary {
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.10);
+  margin-top: 6px;
+}
+#loadout-summary {
+  font-size: 11px;
+  color: #a8c8e0;
+  letter-spacing: 0.3px;
+}
+
+
+/* ============================================================
+   Loadout v2 — summary strip + 2-column card grid
+   ============================================================ */
+.lo-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 10px 8px;
+  background: rgba(0, 20, 40, 0.45);
+  border: 1px solid rgba(100, 160, 220, 0.20);
+  border-radius: 8px;
+  margin-bottom: 14px;
+}
+.lo-stat { text-align: center; }
+.lo-stat-lbl {
+  display: block;
+  font-size: 8px;
+  color: #6a8aa8;
+  letter-spacing: 0.8px;
+  margin-bottom: 2px;
+}
+.lo-stat-val {
+  display: block;
+  font-size: 12px;
+  font-weight: bold;
+  color: #b8e0f8;
+  font-variant-numeric: tabular-nums;
+}
+.lo-section { margin-bottom: 14px; }
+.lo-section-title {
+  font-size: 9px;
+  color: #7a9ab8;
+  letter-spacing: 1.5px;
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+/* Override .sp-group { display: flex } via specificity. */
+.sp-group.lo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+/* Override .sp-opt { padding / display } via specificity. */
+.sp-opt.lo-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 7px 9px;
+  background: rgba(20, 30, 42, 0.70);
+  border: 1px solid rgba(100, 140, 180, 0.25);
+  border-radius: 6px;
+  color: #d0e0f0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.12s ease;
+  min-height: 44px;
+}
+.sp-opt.lo-card:active { transform: scale(0.97); }
+.sp-opt.lo-card.active {
+  background: rgba(40, 140, 70, 0.30);
+  border-color: #50c070;
+  box-shadow: 0 0 8px rgba(60, 180, 80, 0.25);
+}
+.lo-card-name {
+  font-size: 11px;
+  font-weight: bold;
+  line-height: 1.2;
+}
+.lo-card-sub {
+  font-size: 8.5px;
+  color: #7a9ab8;
+  margin-top: 2px;
+  letter-spacing: 0.3px;
+}
+.sp-opt.lo-card.active .lo-card-name { color: #d8ffd8; }
+.sp-opt.lo-card.active .lo-card-sub  { color: #90c8a0; }
+
+
+/* ============================================================
+   UI v3 — landscape layout, sticky stats, live preview
+   ============================================================ */
+
+/* Panel becomes a flex column so header + tabs stay pinned and only
+   the active pane scrolls. #settings-panel prefix beats .sp-inner by
+   specificity — no !important needed. */
+#settings-panel .sp-inner {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
+}
+#settings-panel .sp-header,
+#settings-panel .sp-tabs {
+  flex-shrink: 0;
+}
+#settings-panel .sp-pane.active {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Sticky stats strip inside LOADOUT pane */
+#settings-panel .sp-pane.active[data-pane="LOADOUT"] .lo-summary {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin-top: 0;
+  margin-bottom: 12px;
+  background: rgba(0, 20, 40, 0.96);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 1px 0 rgba(100, 160, 220, 0.15);
+  box-sizing: border-box;
+}
+
+/* Preview container — dark radial gradient behind the transparent
+   WebGL canvas. The canvas element itself stays transparent
+   (renderer.setClearColor(0,0,0,0)). */
+.lo-preview {
+  position: relative;
+  width: 100%;
+  height: 150px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 14px;
+  background: radial-gradient(ellipse at center, #1a2a3a 0%, #050810 100%);
+  border: 1px solid rgba(100, 160, 220, 0.15);
+}
+.lo-preview canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Landscape mobile — compress vertical space, widen grid */
+@media (orientation: landscape) and (max-height: 500px) {
+  #settings-panel .sp-inner {
+    max-width: 94vw;
+    max-height: 96vh;
+    padding: 6px;
+  }
+  #settings-panel .sp-header {
+    padding: 4px 10px;
+    font-size: 11px;
+  }
+  #settings-panel .sp-tabs {
+    padding: 4px;
+    gap: 3px;
+  }
+  #settings-panel .sp-tab {
+    font-size: 9.5px;
+    padding: 5px 8px;
+  }
+  #settings-panel .sp-pane {
+    padding: 8px;
+  }
+  #settings-panel .sp-row {
+    padding: 5px 0;
+  }
+  #settings-panel .sp-lbl {
+    font-size: 10px;
+  }
+  #settings-panel .lo-summary {
+    padding: 6px;
+    gap: 4px;
+  }
+  #settings-panel .lo-stat-val { font-size: 11px; }
+  #settings-panel .lo-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  #settings-panel .sp-opt.lo-card {
+    padding: 5px 7px;
+    min-height: 38px;
+  }
+  #settings-panel .lo-card-name { font-size: 10px; }
+  #settings-panel .lo-card-sub  { font-size: 8px; }
+  #settings-panel .lo-preview   { height: 90px; margin-bottom: 10px; }
+  #settings-panel .lo-section   { margin-bottom: 10px; }
+}
+
+
+/* ============================================================
+   UI v3.1 — safe-area, split-pane loadout, carousels
+   ============================================================ */
+
+/* ---- Safe-area insets + flex centering -------------------- */
+@supports (padding: env(safe-area-inset-top)) {
+  #settings-panel {
+    position: fixed !important;
+    top: 0 !important; right: 0 !important;
+    bottom: 0 !important; left: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding:
+      max(env(safe-area-inset-top), 12px)
+      max(env(safe-area-inset-right), 12px)
+      max(env(safe-area-inset-bottom), 12px)
+      max(env(safe-area-inset-left), 12px) !important;
+    box-sizing: border-box;
+  }
+  #settings-panel.hidden { display: none !important; }
+
+  #settings-panel .sp-inner {
+    position: relative !important;
+    top: auto !important; left: auto !important;
+    right: auto !important; bottom: auto !important;
+    transform: none !important;
+    margin: 0 !important;
+    max-height: 100% !important;
+    max-width: 100% !important;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+}
+
+/* ---- Split-pane LOADOUT (portrait: stacked) ---------------- */
+#settings-panel .sp-pane.active[data-pane="LOADOUT"] {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lo-preview-side {
+  position: relative;
+  flex: 0 0 auto;
+  height: 42vh;
+  min-height: 180px;
+  max-height: 320px;
+  background: radial-gradient(ellipse at 50% 45%, #1a2a3a 0%, #05080e 100%);
+  border-bottom: 1px solid rgba(100, 160, 220, 0.15);
+  overflow: hidden;
+}
+.lo-preview-side canvas#loadout-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+.lo-preview-side .lo-summary {
+  position: absolute;
+  left: 8px; right: 8px; bottom: 8px;
+  margin: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 8px 8px;
+  background: rgba(0, 18, 36, 0.86);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(100, 160, 220, 0.25);
+  border-radius: 8px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+}
+.lo-preview-side .lo-stat { text-align: center; }
+.lo-preview-side .lo-stat-lbl {
+  display: block; font-size: 8px; color: #6a90b8;
+  letter-spacing: 0.9px; margin-bottom: 2px;
+}
+.lo-preview-side .lo-stat-val {
+  display: block; font-size: 13px; font-weight: bold;
+  color: #c8e8ff; font-variant-numeric: tabular-nums;
+}
+
+.lo-list-side {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 10px 20px;
+  overscroll-behavior: contain;
+}
+
+/* ---- Landscape: preview left, list right ------------------ */
+@media (orientation: landscape) and (max-height: 560px) {
+  #settings-panel .sp-pane.active[data-pane="LOADOUT"] {
+    flex-direction: row;
+  }
+  .lo-preview-side {
+    flex: 0 0 42%;
+    width: 42%;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    border-bottom: none;
+    border-right: 1px solid rgba(100, 160, 220, 0.15);
+  }
+  .lo-preview-side .lo-summary {
+    left: 6px; right: 6px; bottom: 6px;
+    padding: 6px 6px;
+  }
+  .lo-preview-side .lo-stat-val { font-size: 12px; }
+  .lo-list-side { padding: 8px 10px 16px; }
+  .lo-section { margin-bottom: 10px; }
+  .lo-section-title { font-size: 9px; margin-bottom: 5px; }
+}
+
+/* ---- Section headers -------------------------------------- */
+.lo-section { margin-bottom: 14px; }
+.lo-section:last-child { margin-bottom: 4px; }
+.lo-section-title {
+  font-size: 10px;
+  color: #90b8d8;
+  letter-spacing: 1.6px;
+  margin-bottom: 6px;
+  padding-left: 2px;
+  font-weight: bold;
+}
+
+/* ---- Horizontal snap-scroll carousels -------------------- */
+.sp-group.lo-carousel {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  gap: 8px !important;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  justify-content: flex-start !important;
+  width: 100% !important;
+  padding: 2px 2px 6px !important;
+  box-sizing: border-box !important;
+  scrollbar-width: none;
+}
+.sp-group.lo-carousel::-webkit-scrollbar { display: none; height: 0; }
+
+.sp-group.lo-carousel .sp-opt.lo-card {
+  flex: 0 0 92px !important;
+  min-width: 92px !important;
+  max-width: 92px !important;
+  width: 92px !important;
+  height: 78px !important;
+  min-height: 78px !important;
+  scroll-snap-align: start;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  padding: 8px 9px !important;
+  background: rgba(20, 30, 42, 0.72);
+  border: 1px solid rgba(100, 140, 180, 0.28);
+  border-left: 3px solid transparent;
+  border-radius: 7px;
+  color: #d0e0f0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  box-sizing: border-box;
+  transition: all 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.sp-group.lo-carousel .sp-opt.lo-card:active {
+  transform: scale(0.96);
+  background: rgba(30, 45, 60, 0.85);
+}
+.sp-group.lo-carousel .sp-opt.lo-card.active {
+  background: rgba(40, 140, 70, 0.32);
+  border-color: rgba(80, 200, 120, 0.55);
+  border-left-color: #50c070;
+  box-shadow: 0 0 10px rgba(60, 180, 80, 0.35);
+}
+
+.sp-group.lo-carousel .lo-card-name {
+  font-size: 11.5px;
+  font-weight: bold;
+  line-height: 1.15;
+  color: #e0f0ff;
+  display: block;
+  margin-bottom: 3px;
+  white-space: normal;
+  word-break: break-word;
+}
+.sp-group.lo-carousel .lo-card-sub {
+  font-size: 9px;
+  color: #7aa0c0;
+  letter-spacing: 0.2px;
+  display: block;
+}
+.sp-group.lo-carousel .sp-opt.lo-card.active .lo-card-name { color: #d8ffd8; }
+.sp-group.lo-carousel .sp-opt.lo-card.active .lo-card-sub  { color: #90d0a0; }

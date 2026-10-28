@@ -86,6 +86,7 @@
       <button class="sp-tab active" data-tab="GENERAL">GENERAL</button>
       <button class="sp-tab" data-tab="CAMERA">CAMERA</button>
       <button class="sp-tab" data-tab="FLIGHT">FLIGHT</button>
+      <button class="sp-tab" data-tab="LOADOUT">LOADOUT</button>
       <button class="sp-tab" data-tab="HUD">HUD</button>
     </div>
     <div class="sp-pane active" data-pane="GENERAL">
@@ -192,6 +193,71 @@
         </div>
       </div>
     </div>
+    <div class="sp-pane" data-pane="LOADOUT">
+      <div class="lo-preview-side">
+        <canvas id="loadout-preview-canvas"></canvas>
+        <div class="lo-summary">
+          <div class="lo-stat"><span class="lo-stat-lbl">MASS</span><span class="lo-stat-val" id="lo-mass">650g</span></div>
+          <div class="lo-stat"><span class="lo-stat-lbl">T/W</span><span class="lo-stat-val" id="lo-tw">5.20</span></div>
+          <div class="lo-stat"><span class="lo-stat-lbl">RATE</span><span class="lo-stat-val" id="lo-rate">880&deg;/s</span></div>
+          <div class="lo-stat"><span class="lo-stat-lbl">PACK</span><span class="lo-stat-val" id="lo-cells">6S 1300mAh</span></div>
+        </div>
+      </div>
+      <div class="lo-list-side">
+        <div class="lo-section">
+          <div class="lo-section-title">FRAME</div>
+          <div class="sp-group lo-carousel" data-setting="loadout.frame">
+            <button class="sp-opt lo-card" data-val="freestyle_5"><span class="lo-card-name">Freestyle 5"</span><span class="lo-card-sub">5" &middot; 650g</span></button>
+            <button class="sp-opt lo-card" data-val="racing_5"><span class="lo-card-name">Racing 5"</span><span class="lo-card-sub">5" &middot; 600g</span></button>
+            <button class="sp-opt lo-card" data-val="cinematic_5"><span class="lo-card-name">Cinematic 5"</span><span class="lo-card-sub">5" &middot; 720g</span></button>
+            <button class="sp-opt lo-card" data-val="cinematic_3"><span class="lo-card-name">Cinematic 3"</span><span class="lo-card-sub">3" &middot; 270g</span></button>
+            <button class="sp-opt lo-card" data-val="toothpick_3"><span class="lo-card-name">Toothpick 3"</span><span class="lo-card-sub">3" &middot; 180g</span></button>
+            <button class="sp-opt lo-card" data-val="longrange_7"><span class="lo-card-name">Long Range 7"</span><span class="lo-card-sub">7" &middot; 1200g</span></button>
+            <button class="sp-opt lo-card" data-val="heavylift_7"><span class="lo-card-name">Heavy Lifter 7"</span><span class="lo-card-sub">7" &middot; 1600g</span></button>
+            <button class="sp-opt lo-card" data-val="tinywhoop_2"><span class="lo-card-name">Tinywhoop 2"</span><span class="lo-card-sub">2" &middot; 40g</span></button>
+          </div>
+        </div>
+        <div class="lo-section">
+          <div class="lo-section-title">MOTORS</div>
+          <div class="sp-group lo-carousel" data-setting="loadout.motors">
+            <button class="sp-opt lo-card" data-val="default_2207"><span class="lo-card-name">2207 1800KV</span><span class="lo-card-sub">Baseline</span></button>
+            <button class="sp-opt lo-card" data-val="high_kv_2207"><span class="lo-card-name">2207 2400KV</span><span class="lo-card-sub">Punchy</span></button>
+            <button class="sp-opt lo-card" data-val="race_2207_2750"><span class="lo-card-name">2207 2750KV</span><span class="lo-card-sub">Race</span></button>
+            <button class="sp-opt lo-card" data-val="mid_2306_1700"><span class="lo-card-name">2306 1700KV</span><span class="lo-card-sub">Efficient</span></button>
+            <button class="sp-opt lo-card" data-val="high_2306_2450"><span class="lo-card-name">2306 2450KV</span><span class="lo-card-sub">Torque</span></button>
+            <button class="sp-opt lo-card" data-val="small_1404"><span class="lo-card-name">1404 3800KV</span><span class="lo-card-sub">Micro</span></button>
+            <button class="sp-opt lo-card" data-val="large_2806"><span class="lo-card-name">2806 1300KV</span><span class="lo-card-sub">Big</span></button>
+            <button class="sp-opt lo-card" data-val="tiny_0802"><span class="lo-card-name">0802 19000KV</span><span class="lo-card-sub">Tiny</span></button>
+          </div>
+        </div>
+        <div class="lo-section">
+          <div class="lo-section-title">PROPS</div>
+          <div class="sp-group lo-carousel" data-setting="loadout.props">
+            <button class="sp-opt lo-card" data-val="default_5140"><span class="lo-card-name">5.1&times;4.0&times;3</span><span class="lo-card-sub">Standard</span></button>
+            <button class="sp-opt lo-card" data-val="race_5143_3"><span class="lo-card-name">5.1&times;4.3&times;3</span><span class="lo-card-sub">Race</span></button>
+            <button class="sp-opt lo-card" data-val="low_pitch_5130"><span class="lo-card-name">5.1&times;3.0&times;3</span><span class="lo-card-sub">Low Pitch</span></button>
+            <button class="sp-opt lo-card" data-val="high_pitch_5152"><span class="lo-card-name">5.1&times;5.2&times;3</span><span class="lo-card-sub">High Pitch</span></button>
+            <button class="sp-opt lo-card" data-val="biblade_5145_2"><span class="lo-card-name">5.1&times;4.5&times;2</span><span class="lo-card-sub">Bi-Blade</span></button>
+            <button class="sp-opt lo-card" data-val="race_7x35"><span class="lo-card-name">7.0&times;3.5&times;3</span><span class="lo-card-sub">Long Range</span></button>
+            <button class="sp-opt lo-card" data-val="cine_3x3"><span class="lo-card-name">3.0&times;3.0&times;3</span><span class="lo-card-sub">Cinematic</span></button>
+            <button class="sp-opt lo-card" data-val="tiny_2x2"><span class="lo-card-name">2.0&times;2.0&times;3</span><span class="lo-card-sub">Tinywhoop</span></button>
+          </div>
+        </div>
+        <div class="lo-section">
+          <div class="lo-section-title">BATTERY</div>
+          <div class="sp-group lo-carousel" data-setting="loadout.battery">
+            <button class="sp-opt lo-card" data-val="default_6s_1300"><span class="lo-card-name">6S 1300mAh</span><span class="lo-card-sub">Standard</span></button>
+            <button class="sp-opt lo-card" data-val="light_4s_850"><span class="lo-card-name">4S 850mAh</span><span class="lo-card-sub">Light</span></button>
+            <button class="sp-opt lo-card" data-val="punch_6s_1800"><span class="lo-card-name">6S 1800mAh</span><span class="lo-card-sub">Punch</span></button>
+            <button class="sp-opt lo-card" data-val="endurance_4s_2200"><span class="lo-card-name">4S 2200mAh</span><span class="lo-card-sub">Endurance</span></button>
+            <button class="sp-opt lo-card" data-val="race_6s_1050"><span class="lo-card-name">6S 1050mAh</span><span class="lo-card-sub">Race</span></button>
+            <button class="sp-opt lo-card" data-val="long_6s_2200"><span class="lo-card-name">6S 2200mAh</span><span class="lo-card-sub">Long Range</span></button>
+            <button class="sp-opt lo-card" data-val="micro_4s_650"><span class="lo-card-name">4S 650mAh</span><span class="lo-card-sub">Toothpick</span></button>
+            <button class="sp-opt lo-card" data-val="tiny_1s_450"><span class="lo-card-name">1S 450mAh</span><span class="lo-card-sub">Tinywhoop</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="sp-pane" data-pane="HUD">
       <div class="sp-row" data-toggle="crosshair">Crosshair</div>
       <div class="sp-row" data-toggle="mode">MODE</div>
@@ -222,7 +288,7 @@
     'https://unpkg.com/three@' + V + '/examples/js/loaders/GLTFLoader.js'
   ];
   var APP = [
-    'js/config.js', 'js/audio.js', 'js/world.js', 'js/physics.js',
+    'js/config.js', 'js/parts.js', 'js/audio.js', 'js/world.js', 'js/physics.js',
     'js/input.js', 'js/hud.js', 'js/visuals.js', 'js/racing.js', 'js/loader.js', 'js/main.js'
   ];
 

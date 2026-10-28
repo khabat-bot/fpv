@@ -33,7 +33,7 @@
   }
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(100, 1, 0.04, 2000);
+  const camera = new THREE.PerspectiveCamera(100, 1, 0.08, 2000);
 
   /* --------------------------- world --------------------------------- */
   let world = World.build(scene);
@@ -66,6 +66,95 @@
   window.__scene = scene;
   window.__drone = drone;
   window.__world = world;
+
+  /* --------------------------- loadout preview ------------ */
+  /* A second small WebGLRenderer lazily initialised when the LOADOUT
+     tab opens. Renders a rotating preview of the current loadout in a
+     small dedicated canvas, using a second DroneVisual instance. Zero
+     cost during flight (only renders when panel is open on LOADOUT). */
+  const settingsPanelEl = document.getElementById('settings-panel');
+  let previewRenderer = null;
+  let previewScene    = null;
+  let previewCamera   = null;
+  let previewVisual   = null;
+  const previewDrone = {
+    position: new THREE.Vector3(),
+    quat:     new THREE.Quaternion(),
+    velocity: new THREE.Vector3(),
+    armed:    true,
+    crashed:  false
+  };
+  const previewIdleState = { throttle: 0, pitch: 0, roll: 0, yaw: 0 };
+
+  function initPreview() {
+    if (previewRenderer) return;
+    const canvas = document.getElementById('loadout-preview-canvas');
+    if (!canvas) return;
+    try {
+      previewRenderer = new THREE.WebGLRenderer({
+        canvas: canvas, antialias: true, alpha: true,
+        powerPreference: 'low-power'
+      });
+      previewRenderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      previewRenderer.setClearColor(0x000000, 0);
+    } catch (e) {
+      console.warn('[preview] renderer init failed:', e && e.message);
+      previewRenderer = null;
+      return;
+    }
+    previewScene = new THREE.Scene();
+    const hemi = new THREE.HemisphereLight(0xdcefff, 0x3a5030, 1.10);
+    previewScene.add(hemi);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.20);
+    keyLight.position.set(2, 3, 2);
+    previewScene.add(keyLight);
+    const fill = new THREE.DirectionalLight(0xa0c0e0, 0.40);
+    fill.position.set(-2, 1, -2);
+    previewScene.add(fill);
+    previewCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 20);
+    previewVisual = DroneVisual.createInstance(previewScene);
+    if (window.Loadout) previewVisual.setLoadout(settings.loadout);
+    console.log('[preview] initialized');
+  }
+
+  function renderPreview(dt) {
+    if (!previewRenderer || !previewScene || !previewVisual) return;
+    const canvas = previewRenderer.domElement;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w === 0 || h === 0) return;
+    const sz = previewRenderer.getSize(new THREE.Vector2());
+    if (Math.abs(sz.x - w) > 1 || Math.abs(sz.y - h) > 1) {
+      previewRenderer.setSize(w, h, false);
+      previewCamera.aspect = w / h;
+      previewCamera.updateProjectionMatrix();
+    }
+    previewVisual.update(previewDrone, previewIdleState, dt || 0.016);
+
+    /* Compute camera distance so the drone fills ~70% of the smaller
+       canvas dimension. Derived from the actual drone prop envelope
+       (~0.19 m radius at frame scale 1.0) so the tinywhoop doesn't end
+       up a speck and the 7" doesn't overflow. */
+    const _frame = (window.PARTS && PARTS.FRAMES)
+      ? PARTS.FRAMES[settings.loadout.frame]
+      : null;
+    const _fScale = (_frame && typeof _frame.scale === 'number') ? _frame.scale : 1.0;
+    const _droneRadius = 0.19 * _fScale;
+    const _fovHalf = (previewCamera.fov * Math.PI / 180) * 0.5;
+    const _dist = _droneRadius / (0.70 * Math.tan(_fovHalf));
+
+    const t = performance.now() * 0.0004;
+    const _elev = Math.PI * 0.28;          /* ~50 deg above horizon */
+    const _horiz = Math.cos(_elev) * _dist;
+    const _vert  = Math.sin(_elev) * _dist;
+    previewCamera.position.set(
+      Math.sin(t) * _horiz,
+      _vert,
+      Math.cos(t) * _horiz
+    );
+    previewCamera.lookAt(0, 0.02, 0);
+    previewRenderer.render(previewScene, previewCamera);
+  }
 
   /* --------------------------- input / hud / racing ------------------ */
   Input.init();
@@ -448,6 +537,12 @@
     tab: 'GENERAL',
     flightMode: 'ACRO',
     env: 'DAY',
+    loadout: {
+      frame:   'freestyle_5',
+      motors:  'default_2207',
+      props:   'default_5140',
+      battery: 'default_6s_1300'
+    },
     hud: {
       crosshair: true, mode: true, arm: true, batt: true,
       time: true, spd: true, alt: true, thr: true
@@ -484,7 +579,7 @@
           settings.chaseDist = s.chaseDist;
         }
         if (typeof s.tab === 'string'
-            && ['GENERAL','CAMERA','FLIGHT','HUD'].indexOf(s.tab) !== -1) {
+            && ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD'].indexOf(s.tab) !== -1) {
           settings.tab = s.tab;
         }
         var VALID_MODES = { ACRO:1, SLOW:1, SPORT:1, FAST:1 };
@@ -497,6 +592,13 @@
         if (typeof s.env === 'string'
             && window.CFG && CFG.env && CFG.env[s.env]) {
           settings.env = s.env;
+        }
+        if (s.loadout && typeof s.loadout === 'object') {
+          var P = window.PARTS || {};
+          if (s.loadout.frame   && P.FRAMES  && P.FRAMES[s.loadout.frame])   settings.loadout.frame   = s.loadout.frame;
+          if (s.loadout.motors  && P.MOTORS  && P.MOTORS[s.loadout.motors])  settings.loadout.motors  = s.loadout.motors;
+          if (s.loadout.props   && P.PROPS   && P.PROPS[s.loadout.props])    settings.loadout.props   = s.loadout.props;
+          if (s.loadout.battery && P.BATTERY && P.BATTERY[s.loadout.battery])settings.loadout.battery = s.loadout.battery;
         }
         if (s.hud && typeof s.hud === 'object') Object.assign(settings.hud, s.hud);
       }
@@ -578,6 +680,13 @@
       : CHASE_DIST.MID;
   }
 
+  function applyLoadout() {
+    if (!window.Loadout) return;
+    Loadout.apply(settings.loadout);
+    if (previewVisual) previewVisual.setLoadout(settings.loadout);
+    saveSettings();
+  }
+
   function applyEnv(name) {
     var envs = (window.CFG && CFG.env) ? CFG.env : null;
     if (!envs) return;
@@ -623,7 +732,7 @@
   function applySettingsTab(name) {
     const panel = document.getElementById('settings-panel');
     if (!panel) return;
-    const valid = ['GENERAL','CAMERA','FLIGHT','HUD'];
+    const valid = ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD'];
     const tabName = (valid.indexOf(name) !== -1) ? name : 'GENERAL';
     panel.querySelectorAll('.sp-tab').forEach(function (t) {
       t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
@@ -639,6 +748,7 @@
     applyFpsCap();
     applyFpsCounter();
     applyEasyMode();
+    applyLoadout();
     applyHudVisibility();
     applyCameraMode();
     applyCamTilt();
@@ -697,6 +807,12 @@
         } else if (setting === 'env') {
           settings.env = val;
           applyEnv(val);
+        } else if (setting && setting.indexOf('loadout.') === 0) {
+          var _loKey = setting.split('.')[1];
+          if (settings.loadout && _loKey in settings.loadout) {
+            settings.loadout[_loKey] = val;
+            applyLoadout();
+          }
         }
         saveSettings();
         refreshSegmented();
@@ -729,6 +845,10 @@
           else if (setting === 'shake') active = (val === settings.shake);
           else if (setting === 'chaseDist') active = (val === settings.chaseDist);
           else if (setting === 'env') active = (val === settings.env);
+          else if (setting && setting.indexOf('loadout.') === 0) {
+            var _sub = setting.split('.')[1];
+            active = (settings.loadout && settings.loadout[_sub] === val);
+          }
           btn.classList.toggle('active', active);
         });
       });
@@ -736,6 +856,21 @@
         var key = row.getAttribute('data-toggle');
         row.classList.toggle('sp-on', !!settings.hud[key]);
       });
+      updateLoadoutSummary();
+    }
+
+    function updateLoadoutSummary() {
+      if (!window.Loadout) return;
+      var e = Loadout.buildEffective(settings.loadout);
+      if (!e) return;
+      var massEl  = document.getElementById('lo-mass');
+      var twEl    = document.getElementById('lo-tw');
+      var rateEl  = document.getElementById('lo-rate');
+      var cellsEl = document.getElementById('lo-cells');
+      if (massEl)  massEl.textContent  = (e.mass * 1000).toFixed(0) + 'g';
+      if (twEl)    twEl.textContent    = e.thrustToWeight.toFixed(2);
+      if (rateEl)  rateEl.textContent  = Math.round(e.maxRates.roll) + '/s';
+      if (cellsEl) cellsEl.textContent = e.battery.cells + 'S ' + e.battery.capacityMah + 'mAh';
     }
 
     panel.querySelectorAll('.sp-tab').forEach(function (t) {
@@ -888,6 +1023,14 @@
 
     HUD.update(drone, camera, flightTime, state.throttle);
     Audio.update(drone, state);
+
+    /* Loadout preview — only when the settings panel is open and the
+       LOADOUT tab is showing. initPreview() runs on first visit. */
+    if (settingsPanelEl && !settingsPanelEl.classList.contains('hidden')
+        && settings.tab === 'LOADOUT') {
+      if (!previewRenderer) initPreview();
+      if (previewRenderer) renderPreview(dt);
+    }
 
     if (drone.crashed && !crashShown) {
       crashShown = true;

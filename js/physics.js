@@ -45,6 +45,7 @@ window.Drone = (function () {
     this._prevThrottle = 0;
     this._grounded = false;
     this._groundedTime = 0;
+    this._sphereScale = 1.0;   /* collision-envelope multiplier — set by Loadout.apply() */
 
     this.reset(0, 0);
   }
@@ -81,6 +82,13 @@ window.Drone = (function () {
     this._windTime = 0;
     this._grounded = false;
     this._groundedTime = 0;
+
+    /* Reset CCD tracking so the first post-respawn collision doesn't
+       see a huge "sweep" from the old position. */
+    if (this._lastResolvedPos) {
+      this._lastResolvedPos.copy(this.position);
+      this._lastResolvedQuat.copy(this.quat);
+    }
   };
 
   Drone.prototype.toggleArm = function () {
@@ -101,6 +109,28 @@ window.Drone = (function () {
     this.throttleIn = thr;
     this._windTime = (this._windTime || 0) + dt;
     this._groundedTime = Math.max(0, (this._groundedTime || 0) - dt);
+
+    /* ---- ground authority gate -------------------------------------
+       Props grinding on the ground produce severe friction torque. The
+       primary mechanism for "stuck on the pad" is to scale the TARGET
+       rate by tilt — otherwise the damping at end-of-step fights a huge
+       target and the drone just grinds upright in a couple of seconds.
+       Tilt ramp: up.y >= 0.35 → full groundAuth 0.15 (scootch normally).
+                  0.15 <= up.y < 0.35 → ramps 0.15 down to 0.
+                  up.y < 0.15 → 0 (fully locked, must respawn).
+       Airborne → 1.0 (no restriction). Uses PREVIOUS frame's _up and
+       _groundedTime — 1-frame lag is invisible for a boolean gate. */
+    var _wasGrounded = (this._groundedTime || 0) > 0;
+    var _groundAuth = 1.0;
+    if (_wasGrounded) {
+      if (this._up.y >= 0.35) {
+        _groundAuth = 0.15;
+      } else if (this._up.y >= 0.15) {
+        _groundAuth = ((this._up.y - 0.15) / 0.20) * 0.15;
+      } else {
+        _groundAuth = 0;
+      }
+    }
 
     const e = CFG.expo;
     const easyActive = !!(this.easyMode && this.armed);
@@ -145,9 +175,9 @@ window.Drone = (function () {
 
       // Target attitude: heading preserved, pitch/roll from stick.
       const targetEul = new THREE.Euler(
-        -curve(input.pitch, e) * maxAngle,
+        -curve(input.pitch, e) * maxAngle * _groundAuth,
         heading,
-        -curve(input.roll,  e) * maxAngle,
+        -curve(input.roll,  e) * maxAngle * _groundAuth,
         'YXZ'
       );
       const targetQ = new THREE.Quaternion().setFromEuler(targetEul);
@@ -189,16 +219,20 @@ window.Drone = (function () {
         corrX *= s;
         corrZ *= s;
       }
+      // Ground gate: same authority scaling as stick targets. Grounded
+      // and deeply tilted → 0 → leveling controller can't right the drone.
+      corrX *= _groundAuth;
+      corrZ *= _groundAuth;
 
       // Yaw: rate-based, reduced.
-      const yawRate = curve(input.yaw, e) * CFG.maxRates.yaw * DEG * CFG.rcRate * yawScale;
+      const yawRate = curve(input.yaw, e) * CFG.maxRates.yaw * DEG * CFG.rcRate * yawScale * _groundAuth;
 
       this._target.set(corrX, -yawRate, corrZ);
     } else {
       /* ===== ACRO MODE (existing behaviour, disarm gating preserved) ===== */
-      const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate : 0);
-      const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate : 0);
-      const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate : 0);
+      const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate * _groundAuth : 0);
+      const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate * _groundAuth : 0);
+      const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate * _groundAuth : 0);
 
       this._target.set(-pRate, -yRate, -rRate);
     }
@@ -218,7 +252,7 @@ window.Drone = (function () {
     this._wobAmp *= Math.exp(-dt * 7.0);
     this._wobPhase += dt * Math.PI * 2 * CFG.propWashFreq;
 
-    if (thr > 0.03) {
+    if (thr > 0.03 && !_wasGrounded) {
       const wobScale = easyActive ? 0.4 : 1.0;
       const w = Math.sin(this._wobPhase) * this._wobAmp * thr;
       a.x += w * 400 * wobScale;
@@ -229,7 +263,7 @@ window.Drone = (function () {
 
     /* ---- motor desync: rapid throttle changes → brief yaw kicks ----
        Skipped in easy mode — the yaw kicks fight the leveling controller. */
-    if (!easyActive && Math.abs(dThr) > 0.2 && thr > 0.3) {
+    if (!easyActive && !_wasGrounded && Math.abs(dThr) > 0.2 && thr > 0.3) {
       a.y += (Math.random() - 0.5) * Math.min(1.5, Math.abs(dThr) * 2.0) * 6.0;
     }
 
@@ -284,13 +318,21 @@ window.Drone = (function () {
       // up.y is clamped to avoid blow-up if momentarily inverted.
       const upY = Math.max(0.3, this._up.y);
       const thrustNeeded = (azCmd + CFG.gravity) / upY * CFG.mass;
-      const effThrust = Math.max(0, Math.min(CFG.maxThrust, thrustNeeded));
+      /* Motor stall: props jammed against ground when inverted. Real ESCs
+         detect stall (high current, zero RPM) and cut the motor. Without
+         this, the drone "pushes into" the ground and the collision silently
+         cancels the movement — the props appear to keep working. */
+      const _stalledEasy = (this._up.y < 0.35) && ((this._groundedTime || 0) > 0);
+      const effThrust = _stalledEasy ? 0 : Math.max(0, Math.min(CFG.maxThrust, thrustNeeded));
 
       acc.copy(this._up).multiplyScalar(effThrust / CFG.mass);
       acc.y -= CFG.gravity;
     } else {
-      /* ===== ACRO MODE (unchanged) ==================================== */
-      acc.copy(this._up).multiplyScalar(thr * CFG.maxThrust / CFG.mass);
+      /* ===== ACRO MODE ================================================ */
+      /* Motor stall: props jammed against ground when inverted. */
+      const _stalledAcro = (this._up.y < 0.35) && ((this._groundedTime || 0) > 0);
+      const _effThr = _stalledAcro ? 0 : thr;
+      acc.copy(this._up).multiplyScalar(_effThr * CFG.maxThrust / CFG.mass);
       acc.y -= CFG.gravity;
     }
 
@@ -337,6 +379,22 @@ window.Drone = (function () {
     this.position.addScaledVector(this.velocity, dt);
 
     this._collide();
+
+    /* ---- ground rotation safety net -------------------------------
+       Primary authority control is in _groundAuth (top of step). This
+       block is the belt-and-suspenders safety net that runs AFTER quat
+       integration, so on the exact landing frame even a huge incoming
+       angVel gets killed. Deeply tilted (up.y < 0.15) → angVel zeroed,
+       drone stays put until RESPAWN. Upright-ish → strong exp damping. */
+    if ((this._groundedTime || 0) > 0) {
+      /* Softer damping than before (exp -10 vs -15, cap 5 vs 2.5) so
+         contacts can push the drone past the tipping point. Motor stall
+         (thrust=0 when inverted + grounded) is what keeps it stuck on
+         its back, not this damping. */
+      this.angVel.multiplyScalar(Math.exp(-dt * 10));
+      const _lenUp = this.angVel.length();
+      if (_lenUp > 5.0) this.angVel.multiplyScalar(5.0 / _lenUp);
+    }
 
     /* ---- battery: LiPo curve + current sag w/ RC smoothing ---- */
     const current = Math.pow(thr, 1.4) * CFG.battery.maxCurrent;
@@ -552,118 +610,345 @@ Drone.prototype._collideBVH = function() {
   var bvh = this.collisionBVH;
   if (!bvh) return;
 
+  if (!this._lastResolvedPos) {
+    this._lastResolvedPos = new THREE.Vector3().copy(this.position);
+    this._lastResolvedQuat = new THREE.Quaternion().copy(this.quat);
+  }
+
+  var dx = this.position.x - this._lastResolvedPos.x;
+  var dy = this.position.y - this._lastResolvedPos.y;
+  var dz = this.position.z - this._lastResolvedPos.z;
+  var sweepDist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+
+  /* CCD: if the sweep is more than ~1.5x the smallest sphere radius,
+     sub-step. Threshold 0.03 matches the motor sphere radius; cap at 6
+     substeps to bound cost (~54 shapecasts at worst case). */
+  var substeps = 1;
+  /* CCD only fires when actually sweeping fast. Below ~5 m/s the
+     per-step displacement is smaller than the smallest sphere radius,
+     so single-shot collision is sufficient. This also stops CCD from
+     firing every frame when the drone is resting against a wall —
+     which was the source of the "stuck" and "camera in wall" bugs. */
+  var speedNow = this.velocity.length();
+  var _ssCCD = this._sphereScale || 1.0;
+  var _ccdGate = 0.03 * _ssCCD;
+  if (sweepDist > _ccdGate && speedNow > 5.0) {
+    substeps = Math.min(6, Math.ceil(sweepDist / _ccdGate));
+  }
+
+  if (substeps === 1) {
+    this._collideBVHOnce();
+  } else {
+    var targetX = this.position.x, targetY = this.position.y, targetZ = this.position.z;
+    var targetQx = this.quat.x, targetQy = this.quat.y, targetQz = this.quat.z, targetQw = this.quat.w;
+
+    this.position.copy(this._lastResolvedPos);
+    this.quat.copy(this._lastResolvedQuat);
+
+    var stepDX = (targetX - this.position.x) / substeps;
+    var stepDY = (targetY - this.position.y) / substeps;
+    var stepDZ = (targetZ - this.position.z) / substeps;
+
+    var qa = this._lastResolvedQuat;
+    var qb = this._tmpTargetQuat || (this._tmpTargetQuat = new THREE.Quaternion());
+    qb.set(targetQx, targetQy, targetQz, targetQw);
+
+    for (var s = 1; s <= substeps; s++) {
+      this.position.x += stepDX;
+      this.position.y += stepDY;
+      this.position.z += stepDZ;
+      this.quat.copy(qa).slerp(qb, s / substeps);
+      this._collideBVHOnce();
+      /* Stop sweeping on the first contact. Continuing to add stepDX
+         after a push-out drives the drone back into the surface — the
+         source of the "drone eats the wall" camera clip. */
+      if (this._hadContactThisStep) break;
+    }
+  }
+
+  this._lastResolvedPos.copy(this.position);
+  this._lastResolvedQuat.copy(this.quat);
+};
+
+Drone.prototype._collideBVHOnce = function() {
+  this._hadContactThisStep = false;
+  var bvh = this.collisionBVH;
+  if (!bvh) return;
+
   if (!this._bvhSphere) {
     this._bvhSphere   = new THREE.Sphere();
     this._bvhClosest  = new THREE.Vector3();
     this._bvhNormal   = new THREE.Vector3();
     this._bvhWorldPos = new THREE.Vector3();
+    this._bvhOffset   = new THREE.Vector3();
+    this._bvhContacts = [];
     this._bvhLogCount = 0;
   }
-  var sphere   = this._bvhSphere;
-  var closest  = this._bvhClosest;
-  var normal   = this._bvhNormal;
-  var worldPos = this._bvhWorldPos;
+  var sphere    = this._bvhSphere;
+  var closest   = this._bvhClosest;
+  var worldPos  = this._bvhWorldPos;
+  var offset    = this._bvhOffset;
+  var contacts  = this._bvhContacts;
+  contacts.length = 0;
 
-  // Query in WORLD space to match the baked BVH geometry.
   if (typeof this.getWorldPosition === 'function') {
     this.getWorldPosition(worldPos);
   } else {
     worldPos.copy(this.position);
   }
 
-  sphere.center.copy(worldPos);
-  sphere.radius = 0.22;
+  /* 9-sphere compound. Positions in drone-body frame (metres).
+     - body:   covers central stack + battery
+     - motors: covers motor bell + prop mount, slight +Y for prop stack
+     - tips:   catches prop-tip / outer-corner strikes; the diagonal
+               sphere covers the swept prop envelope at each corner */
+  var SPHERES = [
+    { x:  0.000, y: 0.000, z:  0.000, r: 0.058 },
+    { x:  0.078, y: 0.012, z: -0.078, r: 0.030 },
+    { x: -0.078, y: 0.012, z: -0.078, r: 0.030 },
+    { x:  0.078, y: 0.012, z:  0.078, r: 0.030 },
+    { x: -0.078, y: 0.012, z:  0.078, r: 0.030 },
+    { x:  0.120, y: 0.012, z: -0.120, r: 0.020 },
+    { x: -0.120, y: 0.012, z: -0.120, r: 0.020 },
+    { x:  0.120, y: 0.012, z:  0.120, r: 0.020 },
+    { x: -0.120, y: 0.012, z:  0.120, r: 0.020 }
+  ];
 
-  var hit = false;
+  /* ---- Pass 1: detect contacts (shapecast per sphere) ---- */
+  var _ss = this._sphereScale || 1.0;
+  for (var si = 0; si < SPHERES.length; si++) {
+    var sp = SPHERES[si];
+    offset.set(sp.x * _ss, sp.y * _ss, sp.z * _ss).applyQuaternion(this.quat);
+    sphere.center.copy(worldPos).add(offset);
+    sphere.radius = sp.r * _ss;
 
-  bvh.shapecast({
-    intersectsBounds: function(box) {
-      var cx = Math.max(box.min.x, Math.min(sphere.center.x, box.max.x));
-      var cy = Math.max(box.min.y, Math.min(sphere.center.y, box.max.y));
-      var cz = Math.max(box.min.z, Math.min(sphere.center.z, box.max.z));
-      var dx = cx - sphere.center.x, dy = cy - sphere.center.y, dz = cz - sphere.center.z;
-      return (dx*dx + dy*dy + dz*dz) <= sphere.radius * sphere.radius;
-    },
-    intersectsTriangle: function(tri) {
-      if (typeof tri.closestPointToPoint === 'function') {
-        tri.closestPointToPoint(sphere.center, closest);
-        var d2 = closest.distanceToSquared(sphere.center);
-        if (d2 < sphere.radius * sphere.radius) {
-          hit = true;
-          return true;
+    var hitPoint = null;
+    var hitNormal = null;
+    (function(sphere, closest, state) {
+      bvh.shapecast({
+        intersectsBounds: function(box) {
+          var cx = Math.max(box.min.x, Math.min(sphere.center.x, box.max.x));
+          var cy = Math.max(box.min.y, Math.min(sphere.center.y, box.max.y));
+          var cz = Math.max(box.min.z, Math.min(sphere.center.z, box.max.z));
+          var dx = cx - sphere.center.x, dy = cy - sphere.center.y, dz = cz - sphere.center.z;
+          return (dx*dx + dy*dy + dz*dz) <= sphere.radius * sphere.radius;
+        },
+        intersectsTriangle: function(tri) {
+          tri.closestPointToPoint(sphere.center, closest);
+          var dx = closest.x - sphere.center.x;
+          var dy = closest.y - sphere.center.y;
+          var dz = closest.z - sphere.center.z;
+          var d2 = dx*dx + dy*dy + dz*dz;
+          if (d2 < sphere.radius * sphere.radius) {
+            state.point = { x: closest.x, y: closest.y, z: closest.z };
+            var ndx = -dx, ndy = -dy, ndz = -dz;
+            var nl = Math.sqrt(ndx*ndx + ndy*ndy + ndz*ndz) || 1e-5;
+            state.normal = { x: ndx/nl, y: ndy/nl, z: ndz/nl };
+            state.dist = nl;
+            return true;
+          }
+          return false;
         }
-      }
-      return false;
+      });
+    })(sphere, closest, { get point() { return hitPoint; }, set point(v) { hitPoint = v; },
+                          get normal() { return hitNormal; }, set normal(v) { hitNormal = v; },
+                          dist: sp.r });
+
+    if (hitPoint && hitNormal) {
+      var dx = sphere.center.x - hitPoint.x;
+      var dy = sphere.center.y - hitPoint.y;
+      var dz = sphere.center.z - hitPoint.z;
+      var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      contacts.push({
+        r: {
+          x: hitPoint.x - worldPos.x,
+          y: hitPoint.y - worldPos.y,
+          z: hitPoint.z - worldPos.z
+        },
+        n: hitNormal,
+        depth: Math.max(0, sp.r - dist)
+      });
     }
-  });
-
-  if (this._bvhLogCount < 3) {
-    console.log('[BVH collide]', hit ? 'HIT' : 'miss',
-      'world:', worldPos.x.toFixed(2), worldPos.y.toFixed(2), worldPos.z.toFixed(2),
-      'local:', this.position.x.toFixed(2), this.position.y.toFixed(2), this.position.z.toFixed(2),
-      hit ? ('closest: ' + closest.x.toFixed(2) + ',' + closest.y.toFixed(2) + ',' + closest.z.toFixed(2)) : '');
-    this._bvhLogCount++;
   }
 
-  if (!hit) return;
+  if (contacts.length === 0) return;
+  this._hadContactThisStep = true;
 
-  // Depenetrate: closest lies on the overlapping triangle surface.
-  normal.copy(sphere.center).sub(closest);
-  var dist = normal.length();
-  if (dist < 1e-5) {
-    normal.set(0, 1, 0);
-    dist = 0.001;
-  } else {
-    normal.divideScalar(dist);
+  /* ---- Crash check uses PRE-impulse contact velocities ---- */
+  var maxApproach = 0;
+  var anyUpwardNormal = false;
+  for (var ci = 0; ci < contacts.length; ci++) {
+    var c = contacts[ci];
+    var rx = c.r.x, ry = c.r.y, rz = c.r.z;
+    var vcx = this.velocity.x + (this.angVel.y * rz - this.angVel.z * ry);
+    var vcy = this.velocity.y + (this.angVel.z * rx - this.angVel.x * rz);
+    var vcz = this.velocity.z + (this.angVel.x * ry - this.angVel.y * rx);
+    var vn = vcx * c.n.x + vcy * c.n.y + vcz * c.n.z;
+    if (-vn > maxApproach) maxApproach = -vn;
+    if (c.n.y > 0.6) anyUpwardNormal = true;
   }
-  var depth = sphere.radius - dist;
 
-  // Ground contact for wind gating. Two independent signals:
-  //  1. Surface normal points up (flat floor, bridge deck, roof).
-  //  2. Closest contact point is well below the sphere center — catches
-  //     edges/corners where the winning triangle might be tilted and
-  //     normal.y is unreliable (intersectsTriangle stops at first hit,
-  //     so `closest` may be on a ramp rather than the flat floor).
-  // Both refresh this._groundedTime to 0.15s. The wind gate in step()
-  // reads that timer — without the window, tiny penetration gaps between
-  // BVH collision frames let wind apply on the "in-between" frames and
-  // the drone creeps across the surface (the actual reported symptom).
-  var _isFloor = (normal.y > 0.4) ||
-                 (closest.y < sphere.center.y - 0.1);
-  if (_isFloor) {
+  /* ---- Pass 2: iterative impulse solve (2 Gauss-Seidel passes) ----
+     Scalar inertia approximation I ≈ 0.003 kg·m² for a 5" quad. Good
+     enough for a tumble feel that scales with lever arm; exact tensor
+     would matter more on an aircraft with asymmetric mass distribution. */
+  var m = CFG.mass;
+  var invM = 1 / m;
+  var I = 0.003;
+  var invI = 1 / I;
+  var restitutionBase = 0.30;
+  var frictionMu = 0.30;
+
+  for (var iter = 0; iter < 2; iter++) {
+    for (var ci2 = 0; ci2 < contacts.length; ci2++) {
+      var cc = contacts[ci2];
+      var rx2 = cc.r.x, ry2 = cc.r.y, rz2 = cc.r.z;
+      var nx = cc.n.x, ny = cc.n.y, nz = cc.n.z;
+
+      /* Contact-point velocity (v + ω × r) */
+      var vcx2 = this.velocity.x + (this.angVel.y * rz2 - this.angVel.z * ry2);
+      var vcy2 = this.velocity.y + (this.angVel.z * rx2 - this.angVel.x * rz2);
+      var vcz2 = this.velocity.z + (this.angVel.x * ry2 - this.angVel.y * rx2);
+      var vn2 = vcx2 * nx + vcy2 * ny + vcz2 * nz;
+      if (vn2 >= 0) continue;
+
+      /* Effective mass: 1/m + (r×n)·I⁻¹·(r×n) — scalar I simplifies
+         to |r×n|²/I. This is the whole reason far hits tumble harder:
+         the (r×n)² term grows with lever length. */
+      var rxn_x = ry2 * nz - rz2 * ny;
+      var rxn_y = rz2 * nx - rx2 * nz;
+      var rxn_z = rx2 * ny - ry2 * nx;
+      var rxn2 = rxn_x*rxn_x + rxn_y*rxn_y + rxn_z*rxn_z;
+      var effMassInv = invM + rxn2 * invI;
+      if (effMassInv < 1e-6) effMassInv = invM;
+
+      /* Velocity-dependent restitution — real bounce only above
+         ~1 m/s approach. Below that: dead (no resting jitter). */
+      var e = (-vn2 > 1.0) ? restitutionBase : 0;
+      var J = -(1 + e) * vn2 / effMassInv;
+
+      /* Apply normal impulse */
+      this.velocity.x += J * invM * nx;
+      this.velocity.y += J * invM * ny;
+      this.velocity.z += J * invM * nz;
+
+      var ti_x = ry2 * (J * nz) - rz2 * (J * ny);
+      var ti_y = rz2 * (J * nx) - rx2 * (J * nz);
+      var ti_z = rx2 * (J * ny) - ry2 * (J * nx);
+      this.angVel.x += invI * ti_x;
+      this.angVel.y += invI * ti_y;
+      this.angVel.z += invI * ti_z;
+
+      /* ---- Coulomb friction ----
+         Tangential velocity AFTER the normal impulse. Slide direction
+         is v_t / |v_t|; friction opposes it, clamped to μ·J. */
+      var vcx3 = this.velocity.x + (this.angVel.y * rz2 - this.angVel.z * ry2);
+      var vcy3 = this.velocity.y + (this.angVel.z * rx2 - this.angVel.x * rz2);
+      var vcz3 = this.velocity.z + (this.angVel.x * ry2 - this.angVel.y * rx2);
+      var vn3 = vcx3 * nx + vcy3 * ny + vcz3 * nz;
+      var vtx = vcx3 - vn3 * nx;
+      var vty = vcy3 - vn3 * ny;
+      var vtz = vcz3 - vn3 * nz;
+      var vt_len = Math.sqrt(vtx*vtx + vty*vty + vtz*vtz);
+
+      if (vt_len > 1e-4) {
+        var tx = vtx / vt_len, ty = vty / vt_len, tz = vtz / vt_len;
+
+        var rxt_x = ry2 * tz - rz2 * ty;
+        var rxt_y = rz2 * tx - rx2 * tz;
+        var rxt_z = rx2 * ty - ry2 * tx;
+        var rxt2 = rxt_x*rxt_x + rxt_y*rxt_y + rxt_z*rxt_z;
+        var effMassInvT = invM + rxt2 * invI;
+
+        var Jt = -vt_len / effMassInvT;
+        var Jt_max = frictionMu * J;
+        if (-Jt > Jt_max) Jt = -Jt_max;
+
+        this.velocity.x += Jt * invM * tx;
+        this.velocity.y += Jt * invM * ty;
+        this.velocity.z += Jt * invM * tz;
+
+        var tit_x = ry2 * (Jt * tz) - rz2 * (Jt * ty);
+        var tit_y = rz2 * (Jt * tx) - rx2 * (Jt * tz);
+        var tit_z = rx2 * (Jt * ty) - ry2 * (Jt * tx);
+        this.angVel.x += invI * tit_x;
+        this.angVel.y += invI * tit_y;
+        this.angVel.z += invI * tit_z;
+      }
+    }
+  }
+
+  /* ---- Push out: iterate ALL contacts, two passes. Deepest-only
+       push-out pinned the drone in corners (deepest normal fixed one
+       wall, other wall's penetration persisted). Two passes reduce
+       residual on multi-contact frames. ---- */
+  for (var po = 0; po < 2; po++) {
+    for (var pi = 0; pi < contacts.length; pi++) {
+      var pc = contacts[pi];
+      if (pc.depth > 0.0001) {
+        this.position.x += pc.n.x * pc.depth;
+        this.position.y += pc.n.y * pc.depth;
+        this.position.z += pc.n.z * pc.depth;
+        pc.depth *= 0.4;   /* second pass gets the residual */
+      }
+    }
+  }
+  /* Epsilon along averaged normal to ensure clear of surface */
+  if (contacts.length > 0) {
+    var ax = 0, ay = 0, az = 0;
+    for (var ni = 0; ni < contacts.length; ni++) {
+      ax += contacts[ni].n.x; ay += contacts[ni].n.y; az += contacts[ni].n.z;
+    }
+    var alen = Math.sqrt(ax*ax + ay*ay + az*az);
+    if (alen > 1e-6) {
+      this.position.x += (ax / alen) * 0.001;
+      this.position.y += (ay / alen) * 0.001;
+      this.position.z += (az / alen) * 0.001;
+    }
+  }
+
+  /* ---- Ground detection ----
+     ONLY upward-facing contacts count as floor. The old `contactY <
+     worldPos.y - 0.1` catch also fired on diving wall impacts, making
+     the drone think it was grounded and reducing angular authority
+     (the "stuck against wall" symptom). Lateral damping is now further
+     gated on a near-vertical normal so wall slides aren't braked. */
+  var anyFloor = false;
+  var anyStrongUpNormal = false;
+  for (var gi = 0; gi < contacts.length; gi++) {
+    var gc = contacts[gi];
+    if (gc.n.y > 0.4) anyFloor = true;
+    if (gc.n.y > 0.6) anyStrongUpNormal = true;
+  }
+  if (anyFloor) {
     this._grounded = true;
     this._groundedTime = 0.15;
-    // Friction: kill horizontal velocity accumulated during penetration
-    // gaps (and any gust spikes that made it through). Mirrors the
-    // AABB floor-snap damping of 0.82/0.85.
-    if (this.velocity) {
+    if (anyStrongUpNormal && this.velocity) {
       this.velocity.x *= 0.85;
       this.velocity.z *= 0.85;
     }
   }
 
-  // Push out (in world delta, applied to local position — safe if parent
-  // has no rotation/scale, which is the standard drone-in-scene setup).
-  this.position.addScaledVector(normal, depth + 0.001);
-
-  var vel = this.velocity || this.vel;
-  if (vel) {
-    var vn = vel.x * normal.x + vel.y * normal.y + vel.z * normal.z;
-    if (vn < 0) {
-      vel.x -= normal.x * vn;
-      vel.y -= normal.y * vn;
-      vel.z -= normal.z * vn;
-      if (this.armed) {
-        var impact = -vn;
-        var cfg = (window.CONFIG) || (typeof CONFIG !== 'undefined' ? CONFIG : {}) || {};
-        var crashSpd = cfg.crashSpeed || 7.0;
-        var hitSpd   = cfg.hitSpeed   || 6.0;
-        if ((normal.y > 0.6 && impact > crashSpd) || impact > hitSpd) {
-          if (typeof this._crash === 'function') this._crash();
-          else if (typeof this.crash === 'function') this.crash();
-        }
-      }
+  /* ---- Crash check (pre-impulse approach speed) ---- */
+  if (this.armed) {
+    var cfg = (window.CFG) || (typeof CFG !== 'undefined' ? CFG : {}) || {};
+    var crashSpd = cfg.crashSpeed || 7.0;
+    var hitSpd   = cfg.hitSpeed   || 6.0;
+    if ((anyUpwardNormal && maxApproach > crashSpd) || maxApproach > hitSpd) {
+      if (typeof this.crash === 'function') this.crash();
     }
+  }
+
+  /* ---- Safety cap: prevent runaway spin from extreme contacts ---- */
+  var avLen = this.angVel.length();
+  if (avLen > 25) this.angVel.multiplyScalar(25 / avLen);
+
+  /* ---- Debug (first 3 collisions only) ---- */
+  if (this._bvhLogCount < 3) {
+    console.log('[BVH collide]', contacts.length, 'contacts,',
+      'maxApproach', maxApproach.toFixed(2),
+      'world', worldPos.x.toFixed(2), worldPos.y.toFixed(2), worldPos.z.toFixed(2));
+    this._bvhLogCount++;
   }
 };
 
@@ -719,7 +1004,7 @@ Drone.prototype._collide = function() {
   Drone.prototype._collideCyl = function (c) {
     const dx = this.position.x - c.x;
     const dz = this.position.z - c.z;
-    const rr = c.r + 0.18;
+    const rr = c.r + 0.06;
     const d2 = dx * dx + dz * dz;
     if (d2 >= rr * rr) return;
 
@@ -730,8 +1015,18 @@ Drone.prototype._collide = function() {
 
     const vn = this.velocity.x * nx + this.velocity.z * nz;
     if (vn < 0) {
+      const _tvx = this.velocity.x - nx * vn;
+      const _tvz = this.velocity.z - nz * vn;
+      const _tangSpeed = Math.sqrt(_tvx*_tvx + _tvz*_tvz);
       this.velocity.x -= vn * nx * 1.35;
       this.velocity.z -= vn * nz * 1.35;
+      // Yaw tumble from a glancing hit on a vertical cylinder.
+      if (this.angVel && _tangSpeed > 0.5) {
+        const _ay = nz * _tvx - nx * _tvz;
+        if (Math.abs(_ay) > 1e-4) {
+          this.angVel.y += Math.sign(_ay) * Math.min(6.0, _tangSpeed * 0.5);
+        }
+      }
       if (this.armed && -vn > CFG.hitSpeed) this.crash();
     }
   };
@@ -742,8 +1037,8 @@ Drone.prototype._collide = function() {
     const dz = this.position.z - c.z;
     const lx = dx * cs - dz * sn;
     const lz = dx * sn + dz * cs;
-    const hw = c.w * 0.5 + 0.18;
-    const hd = c.d * 0.5 + 0.18;
+    const hw = c.w * 0.5 + 0.06;
+    const hd = c.d * 0.5 + 0.06;
 
     if (lx < -hw || lx > hw || lz < -hd || lz > hd) return;
 
@@ -778,8 +1073,18 @@ Drone.prototype._collide = function() {
 
     const vn = this.velocity.x * nx + this.velocity.z * nz;
     if (vn < 0) {
+      const _tvx = this.velocity.x - nx * vn;
+      const _tvz = this.velocity.z - nz * vn;
+      const _tangSpeed = Math.sqrt(_tvx*_tvx + _tvz*_tvz);
       this.velocity.x -= vn * nx * 1.35;
       this.velocity.z -= vn * nz * 1.35;
+      // Yaw tumble from a glancing hit on a box side.
+      if (this.angVel && _tangSpeed > 0.5) {
+        const _ay = nz * _tvx - nx * _tvz;
+        if (Math.abs(_ay) > 1e-4) {
+          this.angVel.y += Math.sign(_ay) * Math.min(6.0, _tangSpeed * 0.5);
+        }
+      }
       if (this.armed && -vn > CFG.hitSpeed) this.crash();
     }
   };

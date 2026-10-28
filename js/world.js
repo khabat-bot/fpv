@@ -404,7 +404,7 @@ window.World = (function () {
         dummy.updateMatrix();
         leaves.setMatrixAt(placed, dummy.matrix);
 
-        addCyl(x, z, 0.85 * s, gy + 7.6 * s, 0);
+        addCyl(x, z, 1.4 * s, gy + 7.6 * s, 0);
         placed++;
       }
     }
