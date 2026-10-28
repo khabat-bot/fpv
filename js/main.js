@@ -432,8 +432,17 @@
       scene.fog = new THREE.Fog(0x87a9c8, 200, 900);
       scene.add(result.scene);
 
+      /* Capture the freshly-loaded scene so the dispose closure can
+         remove it from the scene graph AND free its geometry/materials
+         when the next map (or procedural world) replaces it. Prior
+         versions assigned dispose: null, which meant loading map B on
+         top of map A left map A's meshes visible and its triangles
+         baked into map B's BVH. Textures are intentionally NOT
+         disposed — Three.js caches them across loads and manual
+         disposal risks cross-map texture loss. */
+      const _loadedScene = result.scene;
       world = {
-        root: result.scene,
+        root: _loadedScene,
         sky: null,
         gates: result.gates || [],
         colliders: result.colliders,
@@ -441,12 +450,31 @@
         heightAt: result.heightAt,
         ground: null,
         spawn: new THREE.Vector3(0, 0, 0),
-        dispose: null
+        dispose: function () {
+          scene.remove(_loadedScene);
+          _loadedScene.traverse(function (o) {
+            if (o.geometry) o.geometry.dispose();
+            if (o.material) {
+              if (Array.isArray(o.material)) {
+                o.material.forEach(function (m) { m.dispose(); });
+              } else {
+                o.material.dispose();
+              }
+            }
+          });
+        }
       };
       setFloorFromWorld(world);
       window.__world = world;
       drone.colliders = result.colliders;
       drone.colliderIndex = result.colliderIndex;
+      /* Force the BVH to rebuild even if the new map happens to have
+         the same collider count as the old one — otherwise _ensureBVH
+         early-returns and the stale map-A triangles stay in use. */
+      if (typeof drone._disposeBVH === 'function') {
+        drone._disposeBVH();
+      }
+      drone._bvhColliderCount = -1;  /* belt-and-suspenders */
       /* Re-apply env preset so it overrides the forced background/fog
          set above — the preset is the source of truth for sky+lighting. */
       applyEnv(settings.env || 'DAY');
@@ -537,6 +565,7 @@
     tab: 'GENERAL',
     flightMode: 'ACRO',
     env: 'DAY',
+    batteryMode: 'REAL',
     loadout: {
       frame:   'freestyle_5',
       motors:  'default_2207',
@@ -592,6 +621,10 @@
         if (typeof s.env === 'string'
             && window.CFG && CFG.env && CFG.env[s.env]) {
           settings.env = s.env;
+        }
+        if (typeof s.batteryMode === 'string'
+            && ['REAL','INFINITE'].indexOf(s.batteryMode) !== -1) {
+          settings.batteryMode = s.batteryMode;
         }
         if (s.loadout && typeof s.loadout === 'object') {
           var P = window.PARTS || {};
@@ -680,6 +713,16 @@
       : CHASE_DIST.MID;
   }
 
+  function applyBatteryMode() {
+    CFG.infiniteBattery = (settings.batteryMode === 'INFINITE');
+    if (CFG.infiniteBattery && window.__drone) {
+      // Snap to fresh-pack state so the switch is visible immediately
+      __drone.mahUsed = 0;
+      __drone._smoothCurrent = 0;
+      __drone.voltage = CFG.battery.cells * 4.20;
+    }
+  }
+
   function applyLoadout() {
     if (!window.Loadout) return;
     Loadout.apply(settings.loadout);
@@ -748,6 +791,7 @@
     applyFpsCap();
     applyFpsCounter();
     applyEasyMode();
+    applyBatteryMode();
     applyLoadout();
     applyHudVisibility();
     applyCameraMode();
@@ -807,6 +851,9 @@
         } else if (setting === 'env') {
           settings.env = val;
           applyEnv(val);
+        } else if (setting === 'batteryMode') {
+          settings.batteryMode = val;
+          applyBatteryMode();
         } else if (setting && setting.indexOf('loadout.') === 0) {
           var _loKey = setting.split('.')[1];
           if (settings.loadout && _loKey in settings.loadout) {
@@ -845,6 +892,7 @@
           else if (setting === 'shake') active = (val === settings.shake);
           else if (setting === 'chaseDist') active = (val === settings.chaseDist);
           else if (setting === 'env') active = (val === settings.env);
+          else if (setting === 'batteryMode') active = (val === settings.batteryMode);
           else if (setting && setting.indexOf('loadout.') === 0) {
             var _sub = setting.split('.')[1];
             active = (settings.loadout && settings.loadout[_sub] === val);

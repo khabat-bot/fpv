@@ -181,6 +181,19 @@ window.Loadout = (function () {
 
     var mass = base.mass + (f.massAdd || 0) + (m.massAdd || 0)
              + (p.massAdd || 0) + (b.massAdd || 0);
+    /* Mass floor: extreme part combos can subtract more than the base
+       0.65 kg. A negative or near-zero mass breaks physics: invM = 1/m
+       inverts sign in the collision impulse solver, CFG.maxThrust goes
+       negative, and the drone clips through walls and falls through the
+       map. Clamp to 20 g — lighter than any real quad, but the T/W
+       multiplier is unaffected so the drone still flies. */
+    if (!isFinite(mass) || mass < 0.02) {
+      if (mass < 0.02) {
+        console.warn('[Loadout] mass would be ' + (mass * 1000).toFixed(0) +
+                     'g - clamped to 20g floor');
+      }
+      mass = 0.02;
+    }
 
     /* Frame is a chassis — no thrust contribution. Motor × prop × battery
        drives the thrust multiplier. */

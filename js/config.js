@@ -18,6 +18,17 @@ window.CFG = {
   angResponse: 0.060,
   angAccelMax: 420,
 
+  /* Motor authority coupling: rate targets are scaled by throttle.
+     Real quads lose rotational authority at low throttle because motor
+     torque comes from prop RPM. rollPitch: 0.65 means 65% of stick rate
+     available at 0 throttle, 100% at full. yaw: 0.45 means yaw is
+     deliberately weaker at low throttle (physically correct — yaw comes
+     from prop drag torque, which vanishes at low RPM). Set both to 1.0
+     to fully disable coupling. */
+  feel: {
+    motorAuthority: { rollPitch: 0.65, yaw: 0.45 }
+  },
+
   dragLinear: 0.28,
   dragQuadratic: 0.018,
 
@@ -45,6 +56,10 @@ window.CFG = {
     maxCurrent: 62,
     lowCellVoltage: 3.50
   },
+
+  /* Infinite battery mode — disables drain, voltage sag, and the low-
+     battery beeper. Toggled from SETTINGS -> FLIGHT -> Battery. */
+  infiniteBattery: false,
 
   /* ------------------------------ camera ------------------------------- */
   camera: {

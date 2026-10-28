@@ -116,6 +116,10 @@ window.Audio = (function () {
 
     const t = ctx.currentTime;
     const armed = drone.armed && !drone.crashed;
+    /* Pack-dead — latched OR sagged below cutoff. Silences motor
+       whine, prop wash, and any thrust-driven sound. */
+    const _packDeadAudio = !!drone._packDeadLatched
+      || (drone.voltage / CFG.battery.cells < 3.0);
 
     /* State may be the legacy throttle number OR the new state object.
        Handle both so callers don't need to change in lockstep.
@@ -166,7 +170,14 @@ window.Audio = (function () {
           _bladeCount = _prop.blades     != null ? _prop.blades     : 3;
           _diameterIn = _prop.diameterIn != null ? _prop.diameterIn : 5.1;
         }
-        const _rpmPeak = safe(_ti.rpm, 29880);
+        /* Live voltage factor — as the pack drains, RPM drops and the
+           blade-pass frequency audibly descends. Matches real quads,
+           which you can HEAR getting tired near LVC. */
+        const _vNowCell = (window.__drone && __drone.voltage)
+          ? __drone.voltage / CFG.battery.cells : 4.20;
+        const _packDead = _vNowCell < 3.0;
+        const _vRatio = _packDead ? 0 : Math.min(1.0, _vNowCell / 4.20);
+        const _rpmPeak = safe(_ti.rpm, 29880) * _vRatio;
         _bpfPeak        = (_rpmPeak / 60) * _bladeCount;
         _bpfIdle        = _bpfPeak * 0.10;
         _osc2Ratio      = 7 / _bladeCount;
@@ -193,7 +204,7 @@ window.Audio = (function () {
 
     const _bpfRange = Math.max(1, _bpfPeak - _bpfIdle);
     const baseFreq = armed
-      ? _bpfIdle + Math.pow(throttle, 0.85) * _bpfRange
+      ? Math.max(20, _bpfIdle + Math.pow(throttle, 0.85) * _bpfRange)
       : 65;
 
     const wobble = 1 + Math.sin(t * 7.3) * 0.006 + Math.sin(t * 3.1) * 0.010;
@@ -220,7 +231,7 @@ window.Audio = (function () {
     motorFilter.frequency.setTargetAtTime(
       safe(400 + throttle * (_motorFilterMax - 400), 400), t, 0.08);
 
-    const motorLevel = safe(armed ? (0.05 + throttle * 0.22) : 0, 0);
+    const motorLevel = safe((armed && !_packDeadAudio) ? (0.05 + throttle * 0.22) : 0, 0);
     motorGain.gain.setTargetAtTime(motorLevel, t, 0.08);
 
     /* ---- Wind ----
@@ -254,7 +265,7 @@ window.Audio = (function () {
        Matches the motor desync kicks in physics. */
     const deltaThr = safe(Math.abs(throttle - _prevThrottle), 0);
     _prevThrottle = throttle;
-    const washLevel = safe(armed
+    const washLevel = safe((armed && !_packDeadAudio)
       ? Math.min(0.22, deltaThr * 0.90 + throttle * 0.03)
       : 0, 0);
     washGain.gain.setTargetAtTime(washLevel, t, 0.05);

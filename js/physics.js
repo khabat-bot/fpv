@@ -46,6 +46,7 @@ window.Drone = (function () {
     this._grounded = false;
     this._groundedTime = 0;
     this._sphereScale = 1.0;   /* collision-envelope multiplier — set by Loadout.apply() */
+    this._packDeadLatched = false;  /* latches on first cutoff, cleared by reset() */
 
     this.reset(0, 0);
   }
@@ -82,6 +83,7 @@ window.Drone = (function () {
     this._windTime = 0;
     this._grounded = false;
     this._groundedTime = 0;
+    this._packDeadLatched = false;
 
     /* Reset CCD tracking so the first post-respawn collision doesn't
        see a huge "sweep" from the old position. */
@@ -132,6 +134,40 @@ window.Drone = (function () {
       }
     }
 
+    /* Voltage-dependent peak thrust. Real props scale thrust with
+       RPM^2, and RPM scales with pack voltage. At full charge
+       (4.20 V/cell) this is 1.0 = today's baseline feel. As the pack
+       drains toward LVC, available peak thrust drops quadratically.
+       Applied ONLY as a cap on peak thrust, so hover at mid-stick
+       still works fine even on a nearly-dead pack — only high-thrust
+       maneuvers lose punch. Matches real 5" quads, which sag under
+       load and lose their top-end as SOC drops. */
+    const _vPerCell = this.voltage / CFG.battery.cells;
+    /* Pack dead: below 3.0 V/cell sagged voltage, real ESCs cut off.
+       The drone loses thrust entirely, falls, crashes. Realistic LiPo
+       behaviour — you land at 3.5 V/cell (warning) or the ESC cuts at
+       3.0. No limp-home-forever. */
+    /* Pack-dead latch: once voltage drops below 3.0 V/cell (sagged or
+       rest), real ESCs cut off. Latched so brief voltage recovery from
+       load removal does not restart motors. Cleared only by reset(). */
+    if (!this._packDeadLatched && _vPerCell < 3.0) {
+      this._packDeadLatched = true;
+    }
+    const _packDead = this._packDeadLatched && !CFG.infiniteBattery;
+    const _vFactor = _packDead ? 0 : Math.min(1.0, Math.pow(_vPerCell / 4.20, 2));
+    const _maxThrustNow = CFG.maxThrust * _vFactor;
+    /* Rotation authority scales with pack voltage — real motors produce
+       no torque when dead. Zero at cutoff, tapers below 4.0 V/cell. */
+    const _authVolt = _vFactor;
+    /* Motor authority coupling — real quads lose rotational authority
+       at low throttle. Applied to ACRO only (easy mode's alt-hold keeps
+       motors spinning at ~50% RPM regardless of stick input, so
+       coupling to stick throttle would be wrong). See
+       CFG.feel.motorAuthority for tunables. */
+    const _mA = (CFG.feel && CFG.feel.motorAuthority) || { rollPitch: 1.0, yaw: 1.0 };
+    const _authRP  = _mA.rollPitch + (1 - _mA.rollPitch) * thr;
+    const _authYaw = _mA.yaw       + (1 - _mA.yaw)       * thr;
+
     const e = CFG.expo;
     const easyActive = !!(this.easyMode && this.armed);
 
@@ -175,9 +211,9 @@ window.Drone = (function () {
 
       // Target attitude: heading preserved, pitch/roll from stick.
       const targetEul = new THREE.Euler(
-        -curve(input.pitch, e) * maxAngle * _groundAuth,
+        -curve(input.pitch, e) * maxAngle * _groundAuth * _authVolt,
         heading,
-        -curve(input.roll,  e) * maxAngle * _groundAuth,
+        -curve(input.roll,  e) * maxAngle * _groundAuth * _authVolt,
         'YXZ'
       );
       const targetQ = new THREE.Quaternion().setFromEuler(targetEul);
@@ -221,18 +257,18 @@ window.Drone = (function () {
       }
       // Ground gate: same authority scaling as stick targets. Grounded
       // and deeply tilted → 0 → leveling controller can't right the drone.
-      corrX *= _groundAuth;
-      corrZ *= _groundAuth;
+      corrX *= _groundAuth * _authVolt;
+      corrZ *= _groundAuth * _authVolt;
 
       // Yaw: rate-based, reduced.
-      const yawRate = curve(input.yaw, e) * CFG.maxRates.yaw * DEG * CFG.rcRate * yawScale * _groundAuth;
+      const yawRate = curve(input.yaw, e) * CFG.maxRates.yaw * DEG * CFG.rcRate * yawScale * _groundAuth * _authVolt;
 
       this._target.set(corrX, -yawRate, corrZ);
     } else {
       /* ===== ACRO MODE (existing behaviour, disarm gating preserved) ===== */
-      const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate * _groundAuth : 0);
-      const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate * _groundAuth : 0);
-      const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate * _groundAuth : 0);
+      const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate * _groundAuth * _authVolt * _authRP  : 0);
+      const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate * _groundAuth * _authVolt * _authRP  : 0);
+      const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate * _groundAuth * _authVolt * _authYaw : 0);
 
       this._target.set(-pRate, -yRate, -rRate);
     }
@@ -252,7 +288,7 @@ window.Drone = (function () {
     this._wobAmp *= Math.exp(-dt * 7.0);
     this._wobPhase += dt * Math.PI * 2 * CFG.propWashFreq;
 
-    if (thr > 0.03 && !_wasGrounded) {
+    if (thr > 0.03 && !_wasGrounded && !_packDead) {
       const wobScale = easyActive ? 0.4 : 1.0;
       const w = Math.sin(this._wobPhase) * this._wobAmp * thr;
       a.x += w * 400 * wobScale;
@@ -263,14 +299,14 @@ window.Drone = (function () {
 
     /* ---- motor desync: rapid throttle changes → brief yaw kicks ----
        Skipped in easy mode — the yaw kicks fight the leveling controller. */
-    if (!easyActive && !_wasGrounded && Math.abs(dThr) > 0.2 && thr > 0.3) {
+    if (!easyActive && !_wasGrounded && !_packDead && Math.abs(dThr) > 0.2 && thr > 0.3) {
       a.y += (Math.random() - 0.5) * Math.min(1.5, Math.abs(dThr) * 2.0) * 6.0;
     }
 
     /* ---- ground effect: wobble near terrain ---- */
     const floorHere = this.getFloorY(this.position.x, this.position.z);
     const agl = this.position.y - floorHere;
-    if (agl > 0.2 && agl < 2.5 && this.armed) {
+    if (agl > 0.2 && agl < 2.5 && this.armed && !_packDead) {
       const eff = (1 - agl / 2.5) * 0.5 * (easyActive ? 0.3 : 1.0);
       a.x += (Math.random() - 0.5) * eff * 80;
       a.z += (Math.random() - 0.5) * eff * 80;
@@ -323,7 +359,10 @@ window.Drone = (function () {
          this, the drone "pushes into" the ground and the collision silently
          cancels the movement — the props appear to keep working. */
       const _stalledEasy = (this._up.y < 0.35) && ((this._groundedTime || 0) > 0);
-      const effThrust = _stalledEasy ? 0 : Math.max(0, Math.min(CFG.maxThrust, thrustNeeded));
+      /* Voltage-aware cap: hover needs ~20% of peak thrust, so it still
+         works even on a nearly-dead pack. Fast climbs / steep dives
+         lose their extra punch. */
+      const effThrust = _stalledEasy ? 0 : Math.max(0, Math.min(_maxThrustNow, thrustNeeded));
 
       acc.copy(this._up).multiplyScalar(effThrust / CFG.mass);
       acc.y -= CFG.gravity;
@@ -332,7 +371,9 @@ window.Drone = (function () {
       /* Motor stall: props jammed against ground when inverted. */
       const _stalledAcro = (this._up.y < 0.35) && ((this._groundedTime || 0) > 0);
       const _effThr = _stalledAcro ? 0 : thr;
-      acc.copy(this._up).multiplyScalar(_effThr * CFG.maxThrust / CFG.mass);
+      /* Full stick on a drained pack produces less thrust than full
+         stick on a fresh pack — matches real sag behaviour. */
+      acc.copy(this._up).multiplyScalar(_effThr * _maxThrustNow / CFG.mass);
       acc.y -= CFG.gravity;
     }
 
@@ -397,20 +438,50 @@ window.Drone = (function () {
     }
 
     /* ---- battery: LiPo curve + current sag w/ RC smoothing ---- */
-    const current = Math.pow(thr, 1.4) * CFG.battery.maxCurrent;
-    this.mahUsed += current * dt / 3.6;
+    if (CFG.infiniteBattery) {
+      /* Infinite mode: no drain, no sag, voltage pinned at full charge.
+         Low-batt beeper never fires (vPerCell stays at 4.20 > threshold). */
+      this.mahUsed = 0;
+      this._smoothCurrent = 0;
+      this.voltage = CFG.battery.cells * 4.20;
+      this._packDeadLatched = false;
+    } else {
+      const current = _packDead ? 0 : Math.pow(thr, 1.4) * CFG.battery.maxCurrent;
+      /* Cap mahUsed at capacity — OSD never shows > pack rating. Real
+         pack drains fully at mahUsed == capacityMah. */
+      this.mahUsed = Math.min(CFG.battery.capacityMah,
+                              this.mahUsed + current * dt / 3.6);
 
-    const soc = Math.max(0, 1 - this.mahUsed / CFG.battery.capacityMah);
-    let restCell;
-    if (soc > 0.5)      restCell = 3.85 + (soc - 0.5) * 0.70;
-    else if (soc > 0.1) restCell = 3.70 + (soc - 0.1) * 0.375;
-    else                restCell = 3.00 + soc * 7.00;
+      const soc = Math.max(0, 1 - this.mahUsed / CFG.battery.capacityMah);
+      let restCell;
+      if (soc > 0.5)      restCell = 3.85 + (soc - 0.5) * 0.70;
+      else if (soc > 0.1) restCell = 3.70 + (soc - 0.1) * 0.375;
+      else                restCell = 2.80 + soc * 9.00;  /* drops to 2.8V at 0% SOC */
 
-    this._smoothCurrent = this._smoothCurrent * 0.85 + current * 0.15;
-    const Rpack = 0.008 * CFG.battery.cells;
-    this.voltage = Math.max(
-      3.0 * CFG.battery.cells,
-      CFG.battery.cells * restCell - this._smoothCurrent * Rpack);
+      this._smoothCurrent = this._smoothCurrent * 0.85 + current * 0.15;
+      /* Internal resistance scales INVERSELY with C rating — higher-C
+         packs sag LESS under the same load. Previously maxCurrent was
+         used as a direct multiplier on sag, giving the sign backwards
+         (higher-C packs appeared to sag MORE). New formula:
+         IR_perCell = 0.2 / C_rating (ohm), C = maxCurrent / (capacityAh).
+         A mid-grade 6S 1300mAh 47C pack ≈ 4.2 mΩ/cell. A top-tier 100C
+         pack ≈ 2.0 mΩ/cell. Real 6S LiPo behaviour. */
+      const _C_rating = Math.max(1, CFG.battery.maxCurrent / (CFG.battery.capacityMah / 1000));
+      const _IR_perCell = 0.2 / Math.max(_C_rating, 5);
+      const Rpack = _IR_perCell * CFG.battery.cells;
+      /* Floor at 2.5 V/cell — safety only. Allows load sag below the
+         3.0 V/cell cutoff so the ESC can actually fire it. */
+      if (_packDead) {
+        /* Dead pack: voltage relaxes to rest, capped at 3.0 V/cell.
+           OSD shows clear cutoff reading — no ambiguity. */
+        this.voltage = Math.min(CFG.battery.cells * 3.0,
+                                CFG.battery.cells * restCell);
+      } else {
+        this.voltage = Math.max(
+          2.5 * CFG.battery.cells,
+          CFG.battery.cells * restCell - this._smoothCurrent * Rpack);
+      }
+    }
   };
 
   Drone.prototype._disposeBVH = function() {
