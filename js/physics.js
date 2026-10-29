@@ -509,21 +509,10 @@ Drone.prototype._ensureBVH = function() {
                 && typeof window.MeshBVHLib.MeshBVH === 'function');
 
   if (!hasExt && !hasLib) {
-    if (typeof window !== 'undefined' && !window.__bvhScriptRequested) {
-      window.__bvhScriptRequested = true;
-      var s = document.createElement('script');
-      s.src = 'js/three-mesh-bvh.umd.js';
-      s.onload = function() {
-        console.log('[BVH] three-mesh-bvh.umd.js loaded dynamically');
-        if (window.__drone) window.__drone._bvhFailed = false;
-      };
-      s.onerror = function() {
-        console.warn('[BVH] failed to load three-mesh-bvh.umd.js');
-        if (window.__drone) window.__drone._bvhFailed = true;
-      };
-      document.head.appendChild(s);
-      console.log('[BVH] injected three-mesh-bvh.umd.js (dynamic)');
-    }
+    // three-mesh-bvh.umd.js is loaded via static <script> in index.html.
+    // If we get here without the lib, the static tag is missing or out of order.
+    this._bvhFailed = true;
+    console.warn('[BVH] three-mesh-bvh.umd.js not loaded — check static <script> order in index.html');
     return;
   }
 
