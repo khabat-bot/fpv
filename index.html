@@ -280,119 +280,22 @@
 
 <input id="map-file" type="file" accept=".glb,.gltf" style="display:none" />
 <!-- Multi-CDN Three.js bootstrap + on-screen error reporting -->
-<script>
-(function () {
-  // three.js r128 — last comfortably-old version that ships BOTH
-  // build/three.min.js AND examples/js/loaders/GLTFLoader.js as UMD.
-  var V = '0.128.0';
-  var THREE_URLS = [
-    'https://cdn.jsdelivr.net/npm/three@' + V + '/build/three.min.js',
-    'https://unpkg.com/three@' + V + '/build/three.min.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'
-  ];
-  var GLTF_URLS = [
-    'https://cdn.jsdelivr.net/npm/three@' + V + '/examples/js/loaders/GLTFLoader.js',
-    'https://unpkg.com/three@' + V + '/examples/js/loaders/GLTFLoader.js'
-  ];
-  var APP = [
-    'js/config.js', 'js/parts.js', 'js/audio.js', 'js/world.js', 'js/physics.js',
-    'js/input.js', 'js/hud.js', 'js/visuals.js', 'js/racing.js', 'js/loader.js', 'js/main.js'
-  ];
+<!-- Local Dependencies (MIT licensed) -->
+<script src="vendor/three.min.js"></script>
+<script src="vendor/GLTFLoader.js"></script>
+<script src="vendor/BufferGeometryUtils.js"></script>
 
-  function showError(msg) {
-    var d = document.getElementById('fpv-error-overlay');
-    if (!d) {
-      d = document.createElement('div');
-      d.id = 'fpv-error-overlay';
-      d.style.cssText =
-        'position:fixed;bottom:0;left:0;right:0;z-index:9999;' +
-        'background:rgba(120,0,0,0.92);color:#fff;' +
-        'font:11px/1.4 monospace;padding:6px 8px;' +
-        'max-height:40vh;overflow:auto;';
-      (document.body || document.documentElement).appendChild(d);
-    }
-    d.textContent += (d.textContent ? '\n' : '') + msg;
-  }
-
-  window.addEventListener('error', function (e) {
-    showError('[ERROR] ' + (e.message || 'unknown') +
-              (e.filename ? ' @ ' + e.filename.split('/').pop() + ':' + e.lineno : ''));
-  });
-  window.addEventListener('unhandledrejection', function (e) {
-    var r = e.reason;
-    var msg;
-    if (r instanceof Error) {
-      msg = r.name + ': ' + (r.message || '(empty)');
-    } else if (r && r.message) {
-      msg = String(r.name || '') + ' ' + String(r.message);
-    } else if (r === undefined) {
-      msg = 'undefined';
-    } else if (r === null) {
-      msg = 'null';
-    } else {
-      msg = String(r);
-    }
-    showError('[PROMISE] ' + msg);
-  });
-
-  function tryLoad(urls, cb) {
-    var i = 0;
-    function next() {
-      if (i >= urls.length) return cb(null);
-      var s = document.createElement('script');
-      s.src = urls[i++];
-      s.onload  = function () { cb(s.src); };
-      s.onerror = next;
-      document.head.appendChild(s);
-    }
-    next();
-  }
-
-  function loadApp() {
-    var i = 0;
-    function next() {
-      if (i >= APP.length) return;
-      var s = document.createElement('script');
-      s.src = APP[i++];
-      s.onload  = next;
-      s.onerror = function () { showError('Failed to load ' + s.src); next(); };
-      document.head.appendChild(s);
-    }
-    next();
-  }
-
-  function start() {
-    tryLoad(THREE_URLS, function (src) {
-      if (!src || typeof THREE === 'undefined') {
-        showError('FATAL: three.js could not be loaded from any CDN.');
-        return;
-      }
-      console.log('three.js loaded from', src);
-      tryLoad(GLTF_URLS, function (gsrc) {
-        if (!gsrc) console.warn('GLTFLoader unavailable — LOAD MAP will not work');
-
-        var UTILS_URLS = [
-          'https://cdn.jsdelivr.net/npm/three@' + V + '/examples/js/utils/BufferGeometryUtils.js',
-          'https://unpkg.com/three@' + V + '/examples/js/utils/BufferGeometryUtils.js'
-        ];
-
-        tryLoad(UTILS_URLS, function (usrc) {
-          if (!usrc || !THREE.BufferGeometryUtils) {
-            console.warn('BufferGeometryUtils unavailable — mesh merging disabled');
-          }
-          loadApp();
-        });
-      });
-    });
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
-    start();
-  }
-})();
-</script>
+<!-- App Scripts -->
+<script src="js/config.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/world.js"></script>
+<script src="js/physics.js"></script>
+<script src="js/input.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/visuals.js"></script>
+<script src="js/racing.js"></script>
+<script src="js/loader.js"></script>
+<script src="js/main.js"></script>
 
 </body>
 </html>
