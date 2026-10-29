@@ -1316,3 +1316,37 @@ body.gfx-low #vignette { opacity: 0; }
 }
 .sp-group.lo-carousel .sp-opt.lo-card.active .lo-card-name { color: #d8ffd8; }
 .sp-group.lo-carousel .sp-opt.lo-card.active .lo-card-sub  { color: #90d0a0; }
+
+
+/* ============================================================
+   SQUARE GIMBALS — v5 (appended)
+   Square housing, round knob. Matches a real radio gimbal: the
+   gate is square and the stick can reach the corners. The travel
+   clamp is per-axis in input.js (not circular), so the corner is
+   a full-deflection point on both axes simultaneously.
+   ============================================================ */
+.stick {
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 50%,
+      rgba(120, 180, 255, 0.07) 0%,
+      rgba(120, 180, 255, 0.02) 62%,
+      rgba(120, 180, 255, 0.10) 100%),
+    linear-gradient(180deg,
+      rgba(10, 22, 36, 0.52) 0%,
+      rgba(4, 10, 18, 0.52) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(160, 210, 255, 0.10),
+    inset 0 2px 14px rgba(0, 0, 0, 0.45),
+    0 4px 16px rgba(0, 0, 0, 0.30);
+}
+
+/* Faint corner tick — sells the "square gate" look */
+.stick::before {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-radius: 10px;
+  border: 1px solid rgba(160, 210, 255, 0.08);
+  pointer-events: none;
+}

@@ -103,15 +103,26 @@ window.Input = (function () {
     let dx = (e.clientX - this._cx) / this._radius;
     let dy = (e.clientY - this._cy) / this._radius;
 
-    const len = Math.hypot(dx, dy);
-    if (len > 1) { dx /= len; dy /= len; }
+    // Square gate — matches a real radio gimbal. Per-axis clamp so the
+    // corner is a full-deflection point on BOTH axes at once (magnitude
+    // sqrt(2)). A circular Math.hypot normalize forbids this.
+    dx = clamp(dx, -1, 1);
+    dy = clamp(dy, -1, 1);
 
     const m = Math.hypot(dx, dy);
     const dz = this.deadzone;
-    const scale = (m > dz) ? (m - dz) / ((1 - dz) * m) : 0;
-
-    this.x = dx * scale;
-    this.y = dy * scale;
+    if (m <= dz) {
+      this.x = 0;
+      this.y = 0;
+    } else {
+      // Radial deadzone with rescale. Inside the inscribed circle this
+      // is identical to the old circular-clamp feel. Past it, scale can
+      // exceed 1 by ~3% at the corners — per-axis re-clamp absorbs it,
+      // so the output is always in [-1, 1].
+      const scale = (m - dz) / ((1 - dz) * m);
+      this.x = clamp(dx * scale, -1, 1);
+      this.y = clamp(dy * scale, -1, 1);
+    }
     this.render();
   };
 
