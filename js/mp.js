@@ -21,8 +21,29 @@
 
 window.MP = (function () {
   var scene = null;
-  var remotes = {};  // pid -> { visual, buffer: [{t,pos,quat,armed,crashed}], ... }
+  var remotes = {};
   var INTERP_DELAY_MS = 100;
+  var localLabel = null;
+  var myNickname = 'YOU';
+
+  function createNameLabel(text) {
+    var canvas = document.createElement('canvas');
+    var ctx = canvas.getContext('2d');
+    canvas.width = 256; canvas.height = 64;
+    ctx.font = 'bold 32px sans-serif';
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, 256, 64);
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 128, 32);
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, depthTest: false }));
+    sprite.scale.set(1.5, 0.375, 1);
+    sprite.visible = false;
+    return sprite;
+  }
 
   // Reusable idle input state — remote drones don't have stick input, but
   // DroneVisual.update() reads pitch/roll/yaw to spin the props differentially.
@@ -32,22 +53,33 @@ window.MP = (function () {
 
   function init(sc) { scene = sc; }
 
-  function spawnRemote(pid, loadout) {
+  function spawnRemote(pid, loadout, nickname) {
     if (!scene) { console.warn('[MP] spawn before init'); return; }
-    if (remotes[pid]) return;
+    if (remotes[pid]) {
+      if (nickname && remotes[pid].nickname !== nickname) {
+        remotes[pid].nickname = nickname;
+        scene.remove(remotes[pid].label);
+        remotes[pid].label = createNameLabel(nickname);
+        scene.add(remotes[pid].label);
+      }
+      return;
+    }
     if (!window.DroneVisual || !DroneVisual.createInstance) {
       console.warn('[MP] DroneVisual not available'); return;
     }
     var v = DroneVisual.createInstance(scene);
-    // Remote drones are always visible (they're not "your" drone — FPV
-    // mode hides YOUR group via DroneVisual.setFPVMode on the main instance;
-    // remote instances are independent and must not be affected).
     v.setFPVMode(false);
     if (loadout) v.setLoadout(loadout);
+    
+    var label = createNameLabel(nickname || pid);
+    scene.add(label);
+    
     remotes[pid] = {
       visual: v,
       buffer: [],
-      lastSeen: performance.now()
+      lastSeen: performance.now(),
+      label: label,
+      nickname: nickname || pid
     };
   }
 
@@ -57,11 +89,44 @@ window.MP = (function () {
     if (r.visual && r.visual.dispose) {
       try { r.visual.dispose(); } catch (e) {}
     }
+    if (r.label) {
+      scene.remove(r.label);
+      if (r.label.material.map) r.label.material.map.dispose();
+      r.label.material.dispose();
+    }
     delete remotes[pid];
   }
 
   function clearAll() {
     for (var pid in remotes) removeRemote(pid);
+    if (localLabel) {
+      scene.remove(localLabel);
+      if (localLabel.material.map) localLabel.material.map.dispose();
+      localLabel.material.dispose();
+      localLabel = null;
+    }
+  }
+
+  function setLocalNickname(nick) {
+    myNickname = nick || 'YOU';
+    if (localLabel) {
+      scene.remove(localLabel);
+      if (localLabel.material.map) localLabel.material.map.dispose();
+      localLabel.material.dispose();
+    }
+    localLabel = createNameLabel(myNickname + ' (YOU)');
+    scene.add(localLabel);
+  }
+
+  function updateLocal(drone, camera, isFPV) {
+    if (!localLabel) return;
+    localLabel.visible = !isFPV;
+    if (localLabel.visible) {
+      var pos = drone.position.clone().add(new THREE.Vector3(0, 0.35, 0));
+      localLabel.position.copy(pos);
+      var dist = camera.position.distanceTo(pos);
+      if (dist > 60) localLabel.visible = false;
+    }
   }
 
   function onState(msg) {
@@ -85,7 +150,8 @@ window.MP = (function () {
     }
   }
 
-  function update(dt) {
+  function update(dt, camera) {
+    if (!camera) return;
     var renderAt = performance.now() - INTERP_DELAY_MS;
     for (var pid in remotes) {
       var r = remotes[pid];
@@ -130,6 +196,21 @@ window.MP = (function () {
       };
       var input = armed ? AIRBORNE_INPUT : IDLE_INPUT;
       r.visual.update(fakeDrone, input, dt);
+
+      if (r.label) {
+        var labelPos = pos.clone().add(new THREE.Vector3(0, 0.35, 0));
+        r.label.position.copy(labelPos);
+        var dist = camera.position.distanceTo(labelPos);
+        var dirToLabel = labelPos.clone().sub(camera.position).normalize();
+        var camDir = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+        var dot = dirToLabel.dot(camDir);
+        
+        if (dist > 60 || dot < 0.1) {
+          r.label.visible = false;
+        } else {
+          r.label.visible = true;
+        }
+      }
     }
   }
 
@@ -137,8 +218,10 @@ window.MP = (function () {
     init: init,
     spawnRemote: spawnRemote,
     removeRemote: removeRemote,
+    clearAll: clearAll,
+    setLocalNickname: setLocalNickname,
+    updateLocal: updateLocal,
     onState: onState,
-    update: update,
-    clearAll: clearAll
+    update: update
   };
 })();

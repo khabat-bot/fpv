@@ -165,6 +165,63 @@ async def handle_client(reader, writer):
         except Exception: pass
         return
 
+    # POST /upload-map?room=ABC123
+    if method == 'POST' and path.startswith('/upload-map'):
+        content_length = int(headers.get('content-length', 0))
+        if content_length > 50 * 1024 * 1024:
+            writer.write(b'HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n')
+            try: await writer.drain()
+            except Exception: pass
+            try: writer.close()
+            except Exception: pass
+            return
+        body = b''
+        while len(body) < content_length:
+            chunk = await asyncio.wait_for(reader.read(content_length - len(body)), timeout=30.0)
+            if not chunk: break
+            body += chunk
+        qs = path.split('?', 1)[1] if '?' in path else ''
+        room = qs.split('=')[1] if 'room=' in qs else None
+        if room and room in rooms:
+            fs_path = f'/tmp/fpv-map-{room}.glb'
+            with open(fs_path, 'wb') as f:
+                f.write(body)
+            rooms[room]['map_url'] = f'/map/{room}.glb'
+            out = {'t': 'map_change', 'url': rooms[room]['map_url']}
+            for op, p in list(rooms[room]['players'].items()):
+                try: await ws_send_json(p['ws'], out)
+                except Exception: pass
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n')
+        else:
+            writer.write(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n')
+        try: await writer.drain()
+        except Exception: pass
+        try: writer.close()
+        except Exception: pass
+        return
+
+    # GET /map/<room>.glb
+    if path.startswith('/map/'):
+        room = path.split('/')[-1].replace('.glb', '')
+        fs_path = f'/tmp/fpv-map-{room}.glb'
+        if os.path.exists(fs_path):
+            with open(fs_path, 'rb') as f:
+                body = f.read()
+            writer.write(
+                b'HTTP/1.1 200 OK\r\n'
+                b'Content-Type: model/gltf-binary\r\n'
+                b'Cache-Control: no-cache\r\n'
+                b'Content-Length: ' + str(len(body)).encode('ascii') + b'\r\n'
+                b'\r\n' + body
+            )
+        else:
+            writer.write(b'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n')
+        try: await writer.drain()
+        except Exception: pass
+        try: writer.close()
+        except Exception: pass
+        return
+
     # Static file serving
     rel = path.split('?', 1)[0].lstrip('/')
     if rel == '':
@@ -237,10 +294,10 @@ async def ws_session(reader, writer):
                 code = gen_code()
                 while code in rooms:
                     code = gen_code()
-                rooms[code] = {'host': pid, 'players': {}}
-                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout')}
+                rooms[code] = {'host': pid, 'players': {}, 'map_url': None}
+                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout'), 'nickname': msg.get('nickname', 'Pilot')}
                 room_id = code
-                await ws_send_json(writer, {'t': 'created', 'room': code, 'pid': pid})
+                await ws_send_json(writer, {'t': 'created', 'room': code, 'pid': pid, 'nickname': msg.get('nickname', 'Pilot')})
                 print('[room] create %s by %s' % (code, pid))
 
             elif t == 'join':
@@ -252,20 +309,21 @@ async def ws_session(reader, writer):
                     await ws_send_json(writer, {'t': 'error', 'msg': 'room full'})
                     continue
                 room_id = code
-                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout')}
+                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout'), 'nickname': msg.get('nickname', 'Pilot')}
                 others = [
-                    {'pid': op, 'loadout': rooms[code]['players'][op]['loadout']}
+                    {'pid': op, 'loadout': rooms[code]['players'][op]['loadout'], 'nickname': rooms[code]['players'][op].get('nickname', 'Pilot')}
                     for op in rooms[code]['players'] if op != pid
                 ]
+                map_url = rooms[code].get('map_url')
                 await ws_send_json(writer, {
-                    't': 'joined', 'room': code, 'pid': pid, 'others': others
+                    't': 'joined', 'room': code, 'pid': pid, 'others': others, 'map_url': map_url
                 })
                 for op, p in list(rooms[code]['players'].items()):
                     if op == pid:
                         continue
                     try:
                         await ws_send_json(p['ws'], {
-                            't': 'peer_join', 'pid': pid, 'loadout': msg.get('loadout')
+                            't': 'peer_join', 'pid': pid, 'loadout': msg.get('loadout'), 'nickname': msg.get('nickname', 'Pilot')
                         })
                     except Exception:
                         pass

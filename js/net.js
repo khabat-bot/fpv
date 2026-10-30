@@ -35,7 +35,8 @@ window.Net = (function () {
     peer_leave: [],
     state: [],
     error: [],
-    disconnected: []
+    disconnected: [],
+    map_change: []
   };
 
   function wsUrl() {
@@ -122,11 +123,19 @@ window.Net = (function () {
     });
   }
 
-  function create(loadout) {
-    return connect('create', { loadout: loadout || null });
+  function create(loadout, nickname) {
+    return connect('create', { loadout: loadout || null, nickname: nickname || 'Pilot' });
   }
-  function join(room, loadout) {
-    return connect('join', { room: room, loadout: loadout || null });
+  function join(room, loadout, nickname) {
+    return connect('join', { room: room, loadout: loadout || null, nickname: nickname || 'Pilot' });
+  }
+  function uploadMap(room, file) {
+    return fetch('/upload-map?room=' + encodeURIComponent(room), {
+      method: 'POST',
+      body: file
+    }).then(function(r) {
+      if (!r.ok) throw new Error('Upload failed');
+    });
   }
   function leave() {
     if (ws) {
@@ -162,6 +171,7 @@ window.Net = (function () {
     tick: tick,
     isConnected: function () { return connected; },
     getMyPid: function () { return myPid; },
-    getRoom: function () { return roomId; }
+    getRoom: function () { return roomId; },
+    uploadMap: uploadMap
   };
 })();

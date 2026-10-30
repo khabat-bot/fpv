@@ -961,9 +961,6 @@
     var mpPanel = document.getElementById('mp-panel');
     if (!mpBtn || !mpPanel) return;
 
-    /* Probe the server. On GitHub Pages (or any static host without a
-       server.py backend) this 404s and the MULTIPLAYER button stays
-       hidden. Single-player is completely unaffected. */
     fetch('./mp-status', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (j) { if (j && j.enabled) mpBtn.style.display = ''; })
@@ -989,8 +986,37 @@
         var d = document.createElement('div');
         d.className = 'mp-player';
         d.id = 'mp-peer-' + o.pid;
-        d.textContent = o.pid;
+        d.textContent = o.nickname || o.pid;
         list.appendChild(d);
+      });
+    }
+
+    var myNickname = localStorage.getItem('fpv-nickname') || ('Pilot_' + Math.floor(Math.random()*1000));
+    var nickInput = document.getElementById('mp-nick-input');
+    if (nickInput) {
+      nickInput.value = myNickname;
+      nickInput.addEventListener('change', function() {
+        myNickname = this.value.trim() || 'Pilot';
+        localStorage.setItem('fpv-nickname', myNickname);
+        if (window.MP) MP.setLocalNickname(myNickname);
+      });
+    }
+    if (window.MP) MP.setLocalNickname(myNickname);
+
+    var isHost = false;
+
+    function loadMapFromUrl(url) {
+      setStatus('Downloading map...');
+      fetch(url).then(function(r) {
+        if (!r.ok) throw new Error('Map download failed');
+        return r.blob();
+      }).then(function(blob) {
+        var file = new File([blob], 'shared-map.glb', { type: 'model/gltf-binary' });
+        loadMapFromFile(file, false);
+        setStatus('Map loaded!');
+      }).catch(function(e) {
+        console.error('Map load failed:', e);
+        setStatus('Map load failed');
       });
     }
 
@@ -1009,12 +1035,19 @@
     /* CREATE ROOM */
     document.getElementById('mp-create').addEventListener('click', function () {
       if (!window.Net) { setStatus('multiplayer unavailable'); return; }
+      var nick = (document.getElementById('mp-nick-input').value || 'Pilot').trim();
+      localStorage.setItem('fpv-nickname', nick);
+      myNickname = nick;
+      if (window.MP) MP.setLocalNickname(myNickname);
       setStatus('creating…');
-      Net.create(settings.loadout).then(function (msg) {
+      Net.create(settings.loadout, myNickname).then(function (msg) {
+        isHost = true;
+        document.getElementById('mp-share-map-row').style.display = '';
         document.getElementById('mp-room-code').textContent = msg.room;
         renderPlayers([], msg.pid);
         showInRoom();
         setStatus('');
+        if (msg.map_url) loadMapFromUrl(msg.map_url);
       }).catch(function (e) {
         setStatus('create failed: ' + (e.message || 'error'));
       });
@@ -1025,15 +1058,22 @@
       if (!window.Net) { setStatus('multiplayer unavailable'); return; }
       var code = (document.getElementById('mp-code-input').value || '').trim().toUpperCase();
       if (!code) { setStatus('enter a room code'); return; }
+      var nick = (document.getElementById('mp-nick-input').value || 'Pilot').trim();
+      localStorage.setItem('fpv-nickname', nick);
+      myNickname = nick;
+      if (window.MP) MP.setLocalNickname(myNickname);
       setStatus('joining…');
-      Net.join(code, settings.loadout).then(function (msg) {
+      Net.join(code, settings.loadout, myNickname).then(function (msg) {
+        isHost = false;
+        document.getElementById('mp-share-map-row').style.display = 'none';
         document.getElementById('mp-room-code').textContent = msg.room;
         renderPlayers(msg.others || [], msg.pid);
         (msg.others || []).forEach(function (o) {
-          if (window.MP) MP.spawnRemote(o.pid, o.loadout);
+          if (window.MP) MP.spawnRemote(o.pid, o.loadout, o.nickname);
         });
         showInRoom();
         setStatus('');
+        if (msg.map_url) loadMapFromUrl(msg.map_url);
       }).catch(function (e) {
         setStatus('join failed: ' + (e.message || 'error'));
       });
@@ -1043,6 +1083,7 @@
     document.getElementById('mp-leave').addEventListener('click', function () {
       if (window.Net) Net.leave();
       if (window.MP) MP.clearAll();
+      isHost = false;
       showConnect();
       setStatus('left room');
     });
@@ -1050,13 +1091,13 @@
     /* Net event handlers */
     if (window.Net) {
       Net.on('peer_join', function (msg) {
-        if (window.MP) MP.spawnRemote(msg.pid, msg.loadout);
+        if (window.MP) MP.spawnRemote(msg.pid, msg.loadout, msg.nickname);
         var list = document.getElementById('mp-players');
         if (list && !document.getElementById('mp-peer-' + msg.pid)) {
           var d = document.createElement('div');
           d.className = 'mp-player';
           d.id = 'mp-peer-' + msg.pid;
-          d.textContent = msg.pid;
+          d.textContent = msg.nickname || msg.pid;
           list.appendChild(d);
         }
       });
@@ -1070,8 +1111,33 @@
       });
       Net.on('disconnected', function () {
         if (window.MP) MP.clearAll();
+        isHost = false;
         showConnect();
         setStatus('disconnected from server');
+      });
+
+      Net.on('map_change', function(msg) {
+        if (msg.url) loadMapFromUrl(msg.url);
+      });
+
+      document.getElementById('mp-share-map').addEventListener('click', function () {
+        document.getElementById('mp-map-file').click();
+      });
+
+      document.getElementById('mp-map-file').addEventListener('change', function (ev) {
+        var file = ev.target.files[0];
+        if (!file || !isHost) return;
+        var room = Net.getRoom();
+        if (!room) return;
+        setStatus('Uploading map...');
+        Net.uploadMap(room, file).then(function() {
+          setStatus('Map shared!');
+          loadMapFromFile(file, false);
+        }).catch(function(e) {
+          console.error('Map upload failed:', e);
+          setStatus('Upload failed');
+        });
+        ev.target.value = '';
       });
     }
   })();
@@ -1115,7 +1181,10 @@
       Net.tick(dt);
       Net.sendState(drone);
     }
-    if (window.MP) MP.update(dt);
+    if (window.MP) {
+      MP.update(dt, camera);
+      MP.updateLocal(drone, camera, cameraMode === 'FPV');
+    }
 
     /* Update drone visual to follow physics state */
     if (window.DroneVisual) DroneVisual.update(drone, state, dt);

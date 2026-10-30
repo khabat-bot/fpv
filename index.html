@@ -287,6 +287,11 @@
     </div>
     <div id="mp-connect">
       <div class="mp-row">
+        <span class="mp-lbl">Name</span>
+        <input id="mp-nick-input" class="mp-input" type="text"
+               placeholder="YOUR NAME" maxlength="12" autocomplete="off" />
+      </div>
+      <div class="mp-row">
         <button id="mp-create" class="mp-btn wide">CREATE ROOM</button>
       </div>
       <div class="mp-row">
@@ -302,6 +307,9 @@
         <span class="mp-lbl">Room</span>
         <span id="mp-room-code" class="mp-code">------</span>
       </div>
+      <div class="mp-row" id="mp-share-map-row" style="display:none">
+        <button id="mp-share-map" class="mp-btn wide">SHARE MAP</button>
+      </div>
       <div class="mp-row">
         <span class="mp-lbl">Players</span>
         <div id="mp-players" class="mp-players"></div>
@@ -315,6 +323,7 @@
 </div>
 
 <input id="map-file" type="file" accept=".glb,.gltf" style="display:none" />
+<input id="mp-map-file" type="file" accept=".glb,.gltf" style="display:none" />
 <!-- Multi-CDN Three.js bootstrap + on-screen error reporting -->
 <!-- Local Dependencies (MIT licensed) -->
 <script src="vendor/three.min.js"></script>
