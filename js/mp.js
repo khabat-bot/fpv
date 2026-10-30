@@ -114,20 +114,19 @@ window.MP = (function () {
       if (localLabel.material.map) localLabel.material.map.dispose();
       localLabel.material.dispose();
     }
-    localLabel = createNameLabel(myNickname + ' (YOU)');
-    scene.add(localLabel);
-  }
+    // No local label. You know who you are.
+    if (localLabel) {
+        scene.remove(localLabel);
+        if (localLabel.material.map) localLabel.material.map.dispose();
+        localLabel.material.dispose();
+        localLabel = null;
+    }
+}
 
   function updateLocal(drone, camera, isFPV) {
-    if (!localLabel) return;
-    localLabel.visible = !isFPV;
-    if (localLabel.visible) {
-      var pos = drone.position.clone().add(new THREE.Vector3(0, 0.35, 0));
-      localLabel.position.copy(pos);
-      var dist = camera.position.distanceTo(pos);
-      if (dist > 60) localLabel.visible = false;
-    }
-  }
+    // Local nametag disabled.
+    if (localLabel) localLabel.visible = false;
+}
 
   function onState(msg) {
     if (!msg || !msg.pid) return;

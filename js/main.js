@@ -63,6 +63,8 @@
   if (window.DroneVisual) DroneVisual.build(scene);
 /* Initialize ghost trail */
 if (window.GhostTrail) GhostTrail.init(scene);
+/* Initialize replay */
+if (window.Replay) Replay.init(scene);
 
   /* Debug globals — accessible from Safari Web Inspector */
   window.__scene = scene;
@@ -295,6 +297,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     crashShown = false;
     HUD.showCrash(false);
     updateArmButton();
+    /* Stop replay on respawn */
+    if (window.Replay && Replay.isPlaying()) {
+        Replay.stop();
+        var _br = document.getElementById('btn-replay');
+        if (_br) { _br.textContent = 'REPLAY'; _br.classList.remove('on'); }
+        if (window.HUD && HUD.setStickOverride) HUD.setStickOverride(null);
+    }
   }
 
   btnArm.addEventListener('click', toggleArm);
@@ -317,6 +326,26 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     btnSound.classList.toggle('on', !next);
   });
   btnSound.classList.add('on');
+  
+  /* ---- REPLAY button ---- */
+  var btnReplay = document.getElementById('btn-replay');
+  if (btnReplay) {
+      btnReplay.addEventListener('click', function () {
+          if (window.Replay) {
+              if (Replay.isPlaying()) {
+                  Replay.stop();
+                  btnReplay.textContent = 'REPLAY';
+                  btnReplay.classList.remove('on');
+                  if (window.HUD && HUD.setStickOverride) HUD.setStickOverride(null);
+              } else {
+                  if (Replay.start()) {
+                      btnReplay.textContent = 'STOP';
+                      btnReplay.classList.add('on');
+                  }
+              }
+          }
+      });
+  }
 
 
   /* -------------------- quality toggle ------------------- */
@@ -582,7 +611,8 @@ if (window.GhostTrail) GhostTrail.clear();
     },
     hud: {
       crosshair: true, mode: true, arm: true, batt: true,
-      time: true, spd: true, alt: true, thr: true
+      time: true, spd: true, alt: true, thr: true,
+      ghostTrail: false
     }
   };
   let fpsCap = 0;
@@ -673,6 +703,8 @@ if (window.GhostTrail) GhostTrail.clear();
     if (tl) {
       var anyVisible = tl.querySelector('.row:not(.hud-off)');
       tl.classList.toggle('hud-off', !anyVisible);
+      /* Ghost trail visibility */
+      if (window.GhostTrail) GhostTrail.setVisible(!!settings.hud.ghostTrail);
     }
   }
   function applyFpsCap() { fpsCap = settings.fpsCap; }
@@ -810,6 +842,32 @@ if (window.GhostTrail) GhostTrail.clear();
     applyEnv(settings.env || 'DAY');
   }
 
+  function showDrillMetrics(m) {
+  if (!m) return;
+  var el = document.getElementById('drill-metrics');
+  if (!el) return;
+  var lines = [];
+  if (m.name === 'HOVER') {
+  lines.push('DRIFT RMS ' + m.driftRMS.toFixed(2) + 'm');
+  lines.push('MAX ' + m.maxDrift.toFixed(2) + 'm');
+  lines.push('THR \u03c3 ' + m.throttleStdDev.toFixed(3));
+  } else if (m.name === 'LAND') {
+  if (m.contactVSpeed !== null) lines.push('V-SPD ' + m.contactVSpeed.toFixed(2) + ' m/s');
+  if (m.contactLSpeed !== null) lines.push('L-SPD ' + m.contactLSpeed.toFixed(2) + ' m/s');
+  if (m.settleTime !== null) lines.push('SETTLE ' + m.settleTime.toFixed(2) + 's');
+  } else if (m.name === 'EIGHT') {
+  lines.push('PATH ' + m.pathLength.toFixed(1) + 'm');
+  lines.push('MAX DEV ' + m.maxDeviation.toFixed(2) + 'm');
+  lines.push('CROSS ' + m.crossings);
+  } else if (m.name === 'ORBIT') {
+  lines.push('R MEAN ' + m.radiusMean.toFixed(2) + 'm');
+  lines.push('R \u03c3 ' + m.radiusStdDev.toFixed(2) + 'm');
+  lines.push('DRIFT ' + m.driftRate.toFixed(3) + ' m/s');
+  }
+  el.textContent = m.name + ': ' + lines.join(' \u00b7 ');
+  el.classList.remove('hidden', 'fade');
+  setTimeout(function() { el.classList.add('fade'); }, 5000);
+  }
   function buildSettingsPanel() {
     const panel = document.getElementById('settings-panel');
     if (!panel) { console.warn('settings-panel missing in HTML'); return; }
@@ -862,6 +920,13 @@ if (window.GhostTrail) GhostTrail.clear();
         } else if (setting === 'batteryMode') {
           settings.batteryMode = val;
           applyBatteryMode();
+        } else if (setting === 'drill') {
+        if (window.Drills) {
+        if (val === 'none') Drills.end();
+        else Drills.start(val, showDrillMetrics);
+        }
+        refreshSegmented();
+        return;
         } else if (setting && setting.indexOf('loadout.') === 0) {
           var _loKey = setting.split('.')[1];
           if (settings.loadout && _loKey in settings.loadout) {
@@ -901,6 +966,7 @@ if (window.GhostTrail) GhostTrail.clear();
           else if (setting === 'chaseDist') active = (val === settings.chaseDist);
           else if (setting === 'env') active = (val === settings.env);
           else if (setting === 'batteryMode') active = (val === settings.batteryMode);
+          else if (setting === 'drill') active = (val === (window.Drills && Drills.isActive() ? Drills.getActiveName() : 'none'));
           else if (setting && setting.indexOf('loadout.') === 0) {
             var _sub = setting.split('.')[1];
             active = (settings.loadout && settings.loadout[_sub] === val);
@@ -1186,6 +1252,8 @@ if (window.GhostTrail) GhostTrail.clear();
     if (steps >= 16) accumulator = 0;
 
     if (drone.armed && !drone.crashed) flightTime += dt;
+    /* Drills tick */
+    if (window.Drills && Drills.isActive()) Drills.tick(drone, dt);
 
     /* Multiplayer — send our state at ~30 Hz (throttled inside Net),
        and advance remote drone interpolation. Zero cost when offline. */
@@ -1285,6 +1353,16 @@ if (window.GhostTrail) GhostTrail.clear();
     HUD.update(drone, camera, flightTime, state.throttle, state);
 /* Update ghost trail */
 if (window.GhostTrail) GhostTrail.update(drone);
+/* Replay record + playback */
+if (window.Replay) {
+    Replay.record(drone, state, dt);
+    if (Replay.isPlaying()) {
+        Replay.update(dt);
+        if (window.HUD && HUD.setStickOverride) {
+            HUD.setStickOverride(Replay.getStickState());
+        }
+    }
+}
     Audio.update(drone, state, camera);
 
     /* Loadout preview — only when the settings panel is open and the

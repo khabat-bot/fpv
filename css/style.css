@@ -1471,3 +1471,39 @@ Stick HUD canvas (appended — additive)
     pointer-events: none;
     opacity: 0.7;
 }
+
+/* ============================================================
+Drill metrics overlay (appended — additive)
+============================================================ */
+#drill-metrics {
+position: fixed;
+top: calc(70px + env(safe-area-inset-top));
+left: 50%;
+transform: translateX(-50%);
+z-index: 15;
+font-size: 11px;
+letter-spacing: 0.08em;
+font-family: inherit;
+color: #ffe080;
+background: rgba(0, 10, 20, 0.60);
+border: 1px solid rgba(255, 220, 100, 0.25);
+border-radius: 6px;
+padding: 4px 14px;
+text-align: center;
+pointer-events: none;
+white-space: nowrap;
+text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+transition: opacity 0.5s;
+}
+#drill-metrics.hidden { display: none; }
+#drill-metrics.fade { opacity: 0; }
+
+/* ============================================================
+Replay button active state (appended — additive)
+============================================================ */
+#btn-replay.on {
+background: linear-gradient(180deg, rgba(200, 80, 40, 0.42), rgba(140, 50, 20, 0.38));
+border-color: rgba(255, 160, 80, 0.85);
+color: #ffd0a0;
+box-shadow: 0 0 14px rgba(255, 140, 60, 0.25);
+}

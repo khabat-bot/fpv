@@ -28,6 +28,7 @@ window.GhostTrail = (function() {
         line = new THREE.Line(geometry, material);
         line.frustumCulled = false;
         line.renderOrder = 999;
+        line.visible = false;
         scene.add(line);
     }
 

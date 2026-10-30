@@ -13,6 +13,7 @@ window.HUD = (function () {
 let stickCanvas = null;
 let stickCtx = null;
 let stickVisible = true;
+let _stickOverride = null;
 
 function initStickHUD() {
     stickCanvas = document.getElementById('stick-hud-canvas');
@@ -31,7 +32,8 @@ function resizeStickHUD() {
     stickCtx.scale(dpr, dpr);
 }
 
-function drawStickHUD(state) {
+function drawStickHUD(_stateParam) {
+    var state = _stickOverride || _stateParam;
     if (!stickCtx || !stickVisible) return;
     const w = stickCanvas.clientWidth;
     const h = stickCanvas.clientHeight;
@@ -72,6 +74,8 @@ function drawStickHUD(state) {
     stickCtx.fill();
 }
 
+
+function setStickOverride(state) { _stickOverride = state; }
 function setStickVisible(v) {
     stickVisible = v;
     if (stickCanvas) stickCanvas.style.display = v ? '' : 'none';
@@ -88,6 +92,9 @@ function setStickVisible(v) {
   }
 
   function init() {
+
+
+    initStickHUD();
     el.arm     = document.getElementById('osd-arm');
     el.volt    = document.getElementById('osd-volt');
     el.mah     = document.getElementById('osd-mah');
@@ -99,7 +106,10 @@ function setStickVisible(v) {
     el.crash   = document.getElementById('crash');
   }
 
-  function update(drone, camera, flightTime, stickThrottle) {
+  function update(drone, camera, flightTime, stickThrottle, state) {
+
+
+    drawStickHUD(state);
 
     /* ---------------------- telemetry ---------------------- */
     el.arm.textContent = drone.armed ? 'ARMED' : 'DISARMED';
@@ -128,5 +138,5 @@ function setStickVisible(v) {
     el.crash.classList.toggle('hidden', !show);
   }
 
-  return { init: init, update: update, showCrash: showCrash, resizeStickHUD: resizeStickHUD, setStickVisible: setStickVisible };
+  return { init: init, update: update, showCrash: showCrash, setStickOverride: setStickOverride, resizeStickHUD: resizeStickHUD, setStickVisible: setStickVisible };
 })();

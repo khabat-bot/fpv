@@ -38,6 +38,7 @@
       <div class="thr-txt" id="osd-thr">THR 0%</div>
     </div>
   </div>
+      <div id="drill-metrics" class="hidden"></div>
 </div>
 
 <!-- ======================= BUTTONS =========================== -->
@@ -47,6 +48,7 @@
   <button id="btn-resume" class="btn tiny" style="display:none">RESUME</button>
   <button id="btn-forget" class="btn tiny" style="display:none">FORGET</button>
   <button id="btn-settings" class="btn tiny">SETTINGS</button>
+  <button id="btn-replay" class="btn tiny">REPLAY</button>
   <button id="btn-mp" class="btn tiny" style="display:none">MULTIPLAYER</button>
 </div>
 
@@ -201,6 +203,16 @@
           <button class="sp-opt" data-val="INFINITE">&#x221E;</button>
         </div>
       </div>
+          <div class="sp-row">
+          <span class="sp-lbl">Drill</span>
+          <div class="sp-group" data-setting="drill">
+          <button class="sp-opt" data-val="none">NONE</button>
+          <button class="sp-opt" data-val="hover">HOVER</button>
+          <button class="sp-opt" data-val="land">LAND</button>
+          <button class="sp-opt" data-val="eight">EIGHT</button>
+          <button class="sp-opt" data-val="orbit">ORBIT</button>
+          </div>
+          </div>
     </div>
     <div class="sp-pane" data-pane="LOADOUT">
       <div class="lo-preview-side">
@@ -276,6 +288,7 @@
       <div class="sp-row" data-toggle="spd">SPD</div>
       <div class="sp-row" data-toggle="alt">ALT</div>
       <div class="sp-row" data-toggle="thr">Throttle Bar</div>
+      <div class="sp-row" data-toggle="ghostTrail">Ghost Trail</div>
     </div>
   </div>
 </div>
@@ -345,6 +358,9 @@
 <script src="js/loader.js"></script>
 <script src="js/net.js"></script>
 <script src="js/mp.js"></script>
+<script src="js/parts.js"></script>
+<script src="js/drills.js"></script>
+<script src="js/replay.js"></script>
 <script src="js/main.js"></script>
 
 <div id="net-badge" class="net-badge hidden"></div>
