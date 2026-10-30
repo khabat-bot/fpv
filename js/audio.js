@@ -16,6 +16,7 @@ window.Audio = (function () {
   let _prevThrottle = 0;
   let _lowBattLast = -10;
   let _lastSoundLoadoutKey = null;
+  let remoteAudioNodes = {};
 
   /* safe() — returns fallback if v is not a finite number.
      Web Audio's setTargetAtTime throws "the provided value is non
@@ -111,7 +112,7 @@ window.Audio = (function () {
     }
   }
 
-  function update(drone, state) {
+  function update(drone, state, camera) {
     if (!ctx) return;
 
     const t = ctx.currentTime;
@@ -284,6 +285,49 @@ window.Audio = (function () {
         _lowBattLast = t;
         beep(1200, 0.07, 0.09);
         setTimeout(function () { beep(1200, 0.07, 0.09); }, 110);
+      }
+    }
+
+    /* ---- Remote Drones Audio (Session 4) ---- */
+    if (window.MP && window.MP.getRemoteStates && camera) {
+      var remotes = window.MP.getRemoteStates();
+      var activePids = {};
+      for (var i = 0; i < remotes.length; i++) {
+        var r = remotes[i];
+        activePids[r.pid] = true;
+        var dist = camera.position.distanceTo(r.pos);
+        var vol = 0;
+        if (dist < 60 && r.armed) {
+          vol = Math.max(0, 1.0 - (dist - 5) / 55) * 0.15;
+        }
+        if (!remoteAudioNodes[r.pid]) {
+          var osc = ctx.createOscillator();
+          osc.type = 'sawtooth';
+          osc.frequency.value = 150;
+          var gain = ctx.createGain();
+          gain.gain.value = 0;
+          var filter = ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.value = 800;
+          osc.connect(filter);
+          filter.connect(gain);
+          gain.connect(master);
+          osc.start();
+          remoteAudioNodes[r.pid] = { osc: osc, gain: gain, filter: filter };
+        }
+        var nodes = remoteAudioNodes[r.pid];
+        nodes.gain.gain.setTargetAtTime(safe(vol, 0), t, 0.1);
+        nodes.osc.frequency.setTargetAtTime(safe(150 + vol * 400, 150), t, 0.1);
+      }
+      for (var pid in remoteAudioNodes) {
+        if (!activePids[pid]) {
+          var n = remoteAudioNodes[pid];
+          try { n.osc.stop(); } catch(e){}
+          try { n.osc.disconnect(); } catch(e){}
+          try { n.gain.disconnect(); } catch(e){}
+          try { n.filter.disconnect(); } catch(e){}
+          delete remoteAudioNodes[pid];
+        }
       }
     }
   }

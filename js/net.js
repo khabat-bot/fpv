@@ -27,6 +27,9 @@ window.Net = (function () {
   let roomId = null;
   let sendTimer = 0;
   const SEND_PERIOD = 0.033;  // 30 Hz
+  let lastAction = null;
+  let reconnectTimer = null;
+  let reconnectDelay = 1000;
 
   const listeners = {
     created: [],
@@ -36,6 +39,7 @@ window.Net = (function () {
     state: [],
     error: [],
     disconnected: [],
+    room_lost: [],
     map_change: []
   };
 
@@ -89,6 +93,8 @@ window.Net = (function () {
             myPid = msg.pid;
             roomId = msg.room;
             connected = true;
+            reconnectDelay = 1000;
+            lastAction = { action: action, opts: opts, lastRoom: msg.room };
             resolve(msg);
           }
         } else if (msg.t === 'error') {
@@ -118,9 +124,37 @@ window.Net = (function () {
         ws = null;
         myPid = null;
         roomId = null;
-        if (wasConnected) emit('disconnected');
+        if (wasConnected) {
+          emit('disconnected');
+          scheduleReconnect();
+        }
       };
     });
+  }
+
+  function scheduleReconnect() {
+    if (reconnectTimer) return;
+    if (!lastAction) return;
+    reconnectTimer = setTimeout(function() {
+      reconnectTimer = null;
+      if (!connected && lastAction) {
+        console.log('[Net] reconnect attempt...');
+        var act = (lastAction.action === 'create' && lastAction.lastRoom) ? 'join' : lastAction.action;
+        var opts = Object.assign({}, lastAction.opts);
+        if (act === 'join' && lastAction.lastRoom) opts.room = lastAction.lastRoom;
+        
+        connect(act, opts).catch(function(e) {
+          if (e.message === 'room not found' || e.message === 'room full') {
+            console.log('[Net] room gone, stopping reconnect');
+            lastAction = null;
+            emit('room_lost');
+            return;
+          }
+          reconnectDelay = Math.min(reconnectDelay * 2, 16000);
+          scheduleReconnect();
+        });
+      }
+    }, reconnectDelay);
   }
 
   function create(loadout, nickname) {
@@ -138,6 +172,8 @@ window.Net = (function () {
     });
   }
   function leave() {
+    lastAction = null;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     if (ws) {
       try { ws.send(JSON.stringify({ t: 'leave' })); } catch (e) {}
       try { ws.close(); } catch (e) {}

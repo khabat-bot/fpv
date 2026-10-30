@@ -214,6 +214,18 @@ window.MP = (function () {
     }
   }
 
+  function getRemoteStates() {
+    var out = [];
+    for (var pid in remotes) {
+      var r = remotes[pid];
+      if (r.buffer.length > 0) {
+        var last = r.buffer[r.buffer.length - 1];
+        out.push({ pid: pid, pos: last.pos, armed: last.armed });
+      }
+    }
+    return out;
+  }
+
   return {
     init: init,
     spawnRemote: spawnRemote,
@@ -222,6 +234,7 @@ window.MP = (function () {
     setLocalNickname: setLocalNickname,
     updateLocal: updateLocal,
     onState: onState,
-    update: update
+    update: update,
+    getRemoteStates: getRemoteStates
   };
 })();
