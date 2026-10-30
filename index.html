@@ -46,6 +46,7 @@
   <button id="btn-resume" class="btn tiny" style="display:none">RESUME</button>
   <button id="btn-forget" class="btn tiny" style="display:none">FORGET</button>
   <button id="btn-settings" class="btn tiny">SETTINGS</button>
+  <button id="btn-mp" class="btn tiny" style="display:none">MULTIPLAYER</button>
 </div>
 
 <!-- ======================= JOYSTICKS ========================= -->
@@ -278,6 +279,41 @@
   </div>
 </div>
 
+<div id="mp-panel" class="hidden">
+  <div class="mp-inner">
+    <div class="mp-header">
+      <span>MULTIPLAYER</span>
+      <span class="mp-close" id="mp-close">&#x2715;</span>
+    </div>
+    <div id="mp-connect">
+      <div class="mp-row">
+        <button id="mp-create" class="mp-btn wide">CREATE ROOM</button>
+      </div>
+      <div class="mp-row">
+        <span class="mp-lbl">Join</span>
+        <input id="mp-code-input" class="mp-input" type="text"
+               placeholder="ROOM CODE" maxlength="6" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" />
+        <button id="mp-join" class="mp-btn">JOIN</button>
+      </div>
+    </div>
+    <div id="mp-inroom" style="display:none">
+      <div class="mp-row">
+        <span class="mp-lbl">Room</span>
+        <span id="mp-room-code" class="mp-code">------</span>
+      </div>
+      <div class="mp-row">
+        <span class="mp-lbl">Players</span>
+        <div id="mp-players" class="mp-players"></div>
+      </div>
+      <div class="mp-row">
+        <button id="mp-leave" class="mp-btn wide">LEAVE ROOM</button>
+      </div>
+    </div>
+    <div id="mp-status" class="mp-status"></div>
+  </div>
+</div>
+
 <input id="map-file" type="file" accept=".glb,.gltf" style="display:none" />
 <!-- Multi-CDN Three.js bootstrap + on-screen error reporting -->
 <!-- Local Dependencies (MIT licensed) -->
@@ -296,6 +332,8 @@
 <script src="js/visuals.js"></script>
 <script src="js/racing.js"></script>
 <script src="js/loader.js"></script>
+<script src="js/net.js"></script>
+<script src="js/mp.js"></script>
 <script src="js/main.js"></script>
 
 </body>

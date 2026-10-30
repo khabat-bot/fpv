@@ -67,6 +67,10 @@
   window.__drone = drone;
   window.__world = world;
 
+  /* Multiplayer scene hook — MP needs a reference to the main scene
+     so it can spawn remote DroneVisual instances into it. */
+  if (window.MP) MP.init(scene);
+
   /* --------------------------- loadout preview ------------ */
   /* A second small WebGLRenderer lazily initialised when the LOADOUT
      tab opens. Renders a rotating preview of the current loadout in a
@@ -951,6 +955,127 @@
     });
   }
 
+  /* ==================== multiplayer UI + event wiring ================= */
+  (function mpSetup() {
+    var mpBtn = document.getElementById('btn-mp');
+    var mpPanel = document.getElementById('mp-panel');
+    if (!mpBtn || !mpPanel) return;
+
+    /* Probe the server. On GitHub Pages (or any static host without a
+       server.py backend) this 404s and the MULTIPLAYER button stays
+       hidden. Single-player is completely unaffected. */
+    fetch('./mp-status', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) { if (j && j.enabled) mpBtn.style.display = ''; })
+      .catch(function () { /* no server — leave button hidden */ });
+
+    function showConnect() {
+      document.getElementById('mp-connect').style.display = '';
+      document.getElementById('mp-inroom').style.display = 'none';
+    }
+    function showInRoom() {
+      document.getElementById('mp-connect').style.display = 'none';
+      document.getElementById('mp-inroom').style.display = '';
+    }
+    function setStatus(txt) {
+      var el = document.getElementById('mp-status');
+      if (el) el.textContent = txt || '';
+    }
+    function renderPlayers(others, myPid) {
+      var list = document.getElementById('mp-players');
+      if (!list) return;
+      list.innerHTML = '<div class="mp-player me">' + (myPid || 'you') + ' (you)</div>';
+      (others || []).forEach(function (o) {
+        var d = document.createElement('div');
+        d.className = 'mp-player';
+        d.id = 'mp-peer-' + o.pid;
+        d.textContent = o.pid;
+        list.appendChild(d);
+      });
+    }
+
+    mpBtn.addEventListener('click', function () {
+      mpPanel.classList.remove('hidden');
+      if (window.Net && Net.isConnected()) showInRoom();
+      else showConnect();
+    });
+    document.getElementById('mp-close').addEventListener('click', function () {
+      mpPanel.classList.add('hidden');
+    });
+    mpPanel.addEventListener('click', function (e) {
+      if (e.target === mpPanel) mpPanel.classList.add('hidden');
+    });
+
+    /* CREATE ROOM */
+    document.getElementById('mp-create').addEventListener('click', function () {
+      if (!window.Net) { setStatus('multiplayer unavailable'); return; }
+      setStatus('creating…');
+      Net.create(settings.loadout).then(function (msg) {
+        document.getElementById('mp-room-code').textContent = msg.room;
+        renderPlayers([], msg.pid);
+        showInRoom();
+        setStatus('');
+      }).catch(function (e) {
+        setStatus('create failed: ' + (e.message || 'error'));
+      });
+    });
+
+    /* JOIN ROOM */
+    document.getElementById('mp-join').addEventListener('click', function () {
+      if (!window.Net) { setStatus('multiplayer unavailable'); return; }
+      var code = (document.getElementById('mp-code-input').value || '').trim().toUpperCase();
+      if (!code) { setStatus('enter a room code'); return; }
+      setStatus('joining…');
+      Net.join(code, settings.loadout).then(function (msg) {
+        document.getElementById('mp-room-code').textContent = msg.room;
+        renderPlayers(msg.others || [], msg.pid);
+        (msg.others || []).forEach(function (o) {
+          if (window.MP) MP.spawnRemote(o.pid, o.loadout);
+        });
+        showInRoom();
+        setStatus('');
+      }).catch(function (e) {
+        setStatus('join failed: ' + (e.message || 'error'));
+      });
+    });
+
+    /* LEAVE ROOM */
+    document.getElementById('mp-leave').addEventListener('click', function () {
+      if (window.Net) Net.leave();
+      if (window.MP) MP.clearAll();
+      showConnect();
+      setStatus('left room');
+    });
+
+    /* Net event handlers */
+    if (window.Net) {
+      Net.on('peer_join', function (msg) {
+        if (window.MP) MP.spawnRemote(msg.pid, msg.loadout);
+        var list = document.getElementById('mp-players');
+        if (list && !document.getElementById('mp-peer-' + msg.pid)) {
+          var d = document.createElement('div');
+          d.className = 'mp-player';
+          d.id = 'mp-peer-' + msg.pid;
+          d.textContent = msg.pid;
+          list.appendChild(d);
+        }
+      });
+      Net.on('peer_leave', function (msg) {
+        if (window.MP) MP.removeRemote(msg.pid);
+        var d = document.getElementById('mp-peer-' + msg.pid);
+        if (d && d.parentNode) d.parentNode.removeChild(d);
+      });
+      Net.on('state', function (msg) {
+        if (window.MP) MP.onState(msg);
+      });
+      Net.on('disconnected', function () {
+        if (window.MP) MP.clearAll();
+        showConnect();
+        setStatus('disconnected from server');
+      });
+    }
+  })();
+
   /* ============================ main loop ============================= */
   const PHYSICS_HZ = isMobile ? 120 : 240;
   const FIXED = 1 / PHYSICS_HZ;
@@ -984,6 +1109,13 @@
 
     if (drone.armed && !drone.crashed) flightTime += dt;
 
+    /* Multiplayer — send our state at ~30 Hz (throttled inside Net),
+       and advance remote drone interpolation. Zero cost when offline. */
+    if (window.Net && Net.isConnected()) {
+      Net.tick(dt);
+      Net.sendState(drone);
+    }
+    if (window.MP) MP.update(dt);
 
     /* Update drone visual to follow physics state */
     if (window.DroneVisual) DroneVisual.update(drone, state, dt);
