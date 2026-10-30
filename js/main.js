@@ -61,6 +61,8 @@
 
   /* Build the visible drone model (follows physics state each frame). */
   if (window.DroneVisual) DroneVisual.build(scene);
+/* Initialize ghost trail */
+if (window.GhostTrail) GhostTrail.init(scene);
 
   /* Debug globals — accessible from Safari Web Inspector */
   window.__scene = scene;
@@ -199,6 +201,7 @@
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resizeStickHUD);
   if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);
   resize();
 
@@ -489,6 +492,7 @@
       else setDPRCap(QUALITY[qualityName].dpr);
 
       drone.reset(0, 0);
+if (window.GhostTrail) GhostTrail.clear();
       flightTime = 0;
       crashShown = false;
       HUD.showCrash(false);
@@ -1278,7 +1282,9 @@
       world.ground.position.z = Math.round(camera.position.z / TILE) * TILE;
     }
 
-    HUD.update(drone, camera, flightTime, state.throttle);
+    HUD.update(drone, camera, flightTime, state.throttle, state);
+/* Update ghost trail */
+if (window.GhostTrail) GhostTrail.update(drone);
     Audio.update(drone, state, camera);
 
     /* Loadout preview — only when the settings panel is open and the
