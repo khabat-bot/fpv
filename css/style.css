@@ -1472,6 +1472,11 @@ Stick HUD canvas (appended — additive)
     opacity: 0.7;
 }
 
+/* Touch-first devices get the on-screen gimbals (and no redundant
+   stick preview); mouse/keyboard devices get the preview only. */
+.touch-controls #stick-hud-canvas { display: none; }
+.pointer-controls .stick { display: none; }
+
 /* ============================================================
 Drill metrics overlay (appended — additive)
 ============================================================ */

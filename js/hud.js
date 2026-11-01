@@ -41,17 +41,18 @@ function drawStickHUD(_stateParam) {
     if (!state) return;
     const r = Math.min(w * 0.15, h * 0.8);
     const cy = h - r - 8;
+    /* Left stick: throttle (vertical) + yaw (horizontal) */
     const lx = w * 0.15;
     stickCtx.strokeStyle = 'rgba(140, 200, 255, 0.25)';
     stickCtx.lineWidth = 1;
     stickCtx.beginPath();
     stickCtx.arc(lx, cy, r, 0, Math.PI * 2);
     stickCtx.stroke();
-    const rollX = lx + state.roll * r;
-    const pitchY = cy - state.pitch * r;
+    const yawX = lx + state.yaw * r;
+    const thrY = cy - (state.throttle * 2 - 1) * r;
     stickCtx.fillStyle = 'rgba(110, 242, 160, 0.7)';
     stickCtx.beginPath();
-    stickCtx.arc(rollX, pitchY, 4, 0, Math.PI * 2);
+    stickCtx.arc(yawX, thrY, 4, 0, Math.PI * 2);
     stickCtx.fill();
     const barX = lx + r + 12;
     const barH = r * 2;
@@ -61,16 +62,17 @@ function drawStickHUD(_stateParam) {
     const thrH = state.throttle * barH;
     stickCtx.fillStyle = 'rgba(110, 242, 160, 0.6)';
     stickCtx.fillRect(barX - barW/2, cy + barH/2 - thrH, barW, thrH);
+    /* Right stick: pitch (vertical) + roll (horizontal) */
     const rx = w * 0.85;
     stickCtx.strokeStyle = 'rgba(140, 200, 255, 0.25)';
     stickCtx.beginPath();
     stickCtx.arc(rx, cy, r, 0, Math.PI * 2);
     stickCtx.stroke();
-    const yawX = rx + state.yaw * r;
-    const thrY = cy - (state.throttle * 2 - 1) * r;
+    const rollX = rx + state.roll * r;
+    const pitchY = cy - state.pitch * r;
     stickCtx.fillStyle = 'rgba(110, 242, 160, 0.7)';
     stickCtx.beginPath();
-    stickCtx.arc(yawX, thrY, 4, 0, Math.PI * 2);
+    stickCtx.arc(rollX, pitchY, 4, 0, Math.PI * 2);
     stickCtx.fill();
 }
 

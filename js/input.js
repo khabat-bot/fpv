@@ -7,6 +7,32 @@ window.Input = (function () {
 
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
+  /* Touch-capable devices fly with the on-screen gimbals, so the HUD
+     stick preview is redundant. Mouse/keyboard devices have no gimbals,
+     so the HUD preview is their only stick readout. Apply the mode as a
+     root class so CSS can swap the two without a flash on load. */
+  function hasTouchControls() {
+    const touchPoints = navigator.maxTouchPoints || 0;
+    if (touchPoints > 0) return true;
+    if ('ontouchstart' in window) return true;
+    try {
+      if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+    } catch (err) { /* ignore */ }
+    return false;
+  }
+
+  function applyControlMode() {
+    const touch = hasTouchControls();
+    const root = document.documentElement;
+    root.classList.toggle('touch-controls', touch);
+    root.classList.toggle('pointer-controls', !touch);
+    return touch;
+  }
+
+  /* Run immediately (scripts are at the end of <body>) so the correct
+     controls are painted on the very first frame. */
+  const usesTouch = applyControlMode();
+
   function installIOSGuards() {
     let lastTapEnd = 0;
     document.addEventListener('touchend', function (e) {
@@ -151,6 +177,7 @@ window.Input = (function () {
   const Input = {
     left: null,
     right: null,
+    usesTouch: usesTouch,
     keys: Object.create(null),
     throttleSpring: false,
     onArmToggle: null,
