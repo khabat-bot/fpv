@@ -309,24 +309,61 @@
     <div id="mp-connect">
       <div class="mp-row">
         <span class="mp-lbl">Name</span>
-        <input id="mp-nick-input" class="mp-input" type="text"
+        <input id="mp-nick-input" class="mp-input mp-input-name" type="text"
                placeholder="YOUR NAME" maxlength="12" autocomplete="off" />
       </div>
-      <div class="mp-row">
-        <button id="mp-create" class="mp-btn wide">CREATE ROOM</button>
+      <div class="mp-section">
+        <div class="mp-section-title">CREATE LOBBY</div>
+        <div class="mp-row">
+          <span class="mp-lbl">Lobby</span>
+          <input id="mp-lobby-name" class="mp-input mp-input-name" type="text"
+                 placeholder="LOBBY NAME (OPTIONAL)" maxlength="32" autocomplete="off" />
+        </div>
+        <div class="mp-row">
+          <span class="mp-lbl">Access</span>
+          <div class="mp-group" id="mp-visibility">
+            <button class="mp-opt active" data-val="public">PUBLIC</button>
+            <button class="mp-opt" data-val="private">PRIVATE</button>
+          </div>
+        </div>
+        <div class="mp-hint" id="mp-visibility-hint">Listed in the server browser. Anyone can join.</div>
+        <div class="mp-row">
+          <button id="mp-create" class="mp-btn wide">CREATE LOBBY</button>
+        </div>
       </div>
-      <div class="mp-row">
-        <span class="mp-lbl">Join</span>
-        <input id="mp-code-input" class="mp-input" type="text"
-               placeholder="ROOM CODE" maxlength="6" autocomplete="off"
-               autocapitalize="characters" spellcheck="false" />
-        <button id="mp-join" class="mp-btn">JOIN</button>
+      <div class="mp-section">
+        <div class="mp-section-head">
+          <span class="mp-section-title">PUBLIC LOBBIES</span>
+          <button id="mp-refresh" class="mp-link">REFRESH</button>
+        </div>
+        <div id="mp-server-list" class="mp-servers">
+          <div class="mp-empty">No public lobbies. Create one!</div>
+        </div>
+      </div>
+      <div class="mp-section">
+        <div class="mp-section-title">JOIN WITH CODE</div>
+        <div class="mp-row">
+          <span class="mp-lbl">Code</span>
+          <input id="mp-code-input" class="mp-input" type="text"
+                 placeholder="ROOM CODE" maxlength="6" autocomplete="off"
+                 autocapitalize="characters" spellcheck="false" />
+          <button id="mp-join" class="mp-btn">JOIN</button>
+        </div>
+        <div class="mp-hint">Private lobbies aren't listed — join them with their room code.</div>
       </div>
     </div>
     <div id="mp-inroom" style="display:none">
       <div class="mp-row">
+        <span class="mp-lbl">Lobby</span>
+        <span id="mp-lobby-title" class="mp-lobby-title">Lobby</span>
+      </div>
+      <div class="mp-row">
         <span class="mp-lbl">Room</span>
         <span id="mp-room-code" class="mp-code">------</span>
+      </div>
+      <div class="mp-row">
+        <span class="mp-lbl">Access</span>
+        <span id="mp-visibility-badge" class="mp-badge private">PRIVATE</span>
       </div>
       <div class="mp-row" id="mp-share-map-row" style="display:none">
         <button id="mp-share-map" class="mp-btn wide">SHARE MAP</button>

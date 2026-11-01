@@ -1374,7 +1374,9 @@ body.gfx-low #vignette { opacity: 0; }
   border-radius: 12px;
   padding: 18px 20px;
   min-width: 300px;
-  max-width: min(92vw, 420px);
+  max-width: min(92vw, 460px);
+  max-height: min(88vh, 680px);
+  overflow-y: auto;
   color: #d8dde4;
   font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
@@ -1406,6 +1408,83 @@ body.gfx-low #vignette { opacity: 0; }
   letter-spacing: 2px; text-align: center; text-transform: uppercase;
 }
 .mp-input:focus { outline: none; border-color: #4a80d0; }
+.mp-input-name {
+  text-transform: none; letter-spacing: 0; text-align: left;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.mp-section {
+  border-top: 1px solid #1b2129;
+  margin-top: 16px;
+  padding-top: 12px;
+}
+.mp-section-title {
+  color: #9aa4b0; font-size: 10px; font-weight: 700;
+  letter-spacing: 1.5px; text-transform: uppercase;
+}
+.mp-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.mp-link {
+  background: none; border: 0; color: #6d9ee8; cursor: pointer;
+  font: 10px/1 -apple-system, sans-serif; font-weight: 700;
+  letter-spacing: 1px; text-transform: uppercase; padding: 4px;
+}
+.mp-link:hover { color: #9dc0ff; }
+.mp-group {
+  flex: 1; display: flex; gap: 0;
+  border: 1px solid #2a3038; border-radius: 6px; overflow: hidden;
+}
+.mp-opt {
+  flex: 1; background: #151b22; color: #8a929c; border: 0;
+  border-right: 1px solid #2a3038; cursor: pointer;
+  padding: 8px 6px; font: 11px/1 -apple-system, sans-serif;
+  font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+}
+.mp-opt:last-child { border-right: 0; }
+.mp-opt:hover { background: #1e2630; color: #d8dde4; }
+.mp-opt.active { background: #24466e; color: #dbe9ff; }
+.mp-hint {
+  color: #68707c; font-size: 10px; line-height: 1.4;
+  margin: -2px 0 8px 80px;
+}
+.mp-servers {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 190px; overflow-y: auto;
+}
+.mp-server {
+  display: flex; align-items: center; gap: 10px;
+  background: #141a21; border: 1px solid #242b34;
+  border-radius: 6px; padding: 8px 10px;
+}
+.mp-server-info { flex: 1; min-width: 0; }
+.mp-server-name {
+  color: #d8dde4; font-size: 12px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mp-server-meta {
+  color: #78818c; font: 10px/1.4 monospace;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mp-server .mp-btn { padding: 7px 10px; font-size: 10px; }
+.mp-server .mp-btn:disabled {
+  opacity: 0.4; cursor: default; transform: none;
+  background: #1e2630;
+}
+.mp-empty {
+  color: #68707c; font-size: 11px; text-align: center;
+  padding: 12px 6px; border: 1px dashed #242b34; border-radius: 6px;
+}
+.mp-lobby-title {
+  flex: 1; min-width: 0; color: #d8dde4; font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mp-badge {
+  border-radius: 4px; padding: 4px 8px;
+  font: 10px/1 monospace; letter-spacing: 1px; font-weight: 700;
+}
+.mp-badge.public { color: #6ef2a0; background: #0a1410; border: 1px solid #1a3a24; }
+.mp-badge.private { color: #e8b16d; background: #16110a; border: 1px solid #3a2a14; }
 .mp-btn {
   background: #1e2630; color: #d8dde4;
   border: 1px solid #2a3038; border-radius: 6px;

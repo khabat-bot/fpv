@@ -1557,10 +1557,14 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       var el = document.getElementById('mp-status');
       if (el) el.textContent = txt || '';
     }
-    function renderPlayers(others, myPid) {
+    function renderPlayers(others) {
       var list = document.getElementById('mp-players');
       if (!list) return;
-      list.innerHTML = '<div class="mp-player me">' + (myPid || 'you') + ' (you)</div>';
+      list.textContent = '';
+      var me = document.createElement('div');
+      me.className = 'mp-player me';
+      me.textContent = myNickname + ' (you)';
+      list.appendChild(me);
       (others || []).forEach(function (o) {
         var d = document.createElement('div');
         d.className = 'mp-player';
@@ -1582,6 +1586,110 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     }
     if (window.MP) MP.setLocalNickname(myNickname);
 
+    /* --- lobby visibility + public server browser --- */
+    var visibility = 'public';
+    var visibilityGroup = document.getElementById('mp-visibility');
+    var visibilityHint = document.getElementById('mp-visibility-hint');
+    var serverListEl = document.getElementById('mp-server-list');
+
+    function setVisibility(value) {
+      visibility = (value === 'private') ? 'private' : 'public';
+      if (visibilityGroup) {
+        var opts = visibilityGroup.querySelectorAll('.mp-opt');
+        for (var i = 0; i < opts.length; i++) {
+          opts[i].classList.toggle('active', opts[i].getAttribute('data-val') === visibility);
+        }
+      }
+      if (visibilityHint) {
+        visibilityHint.textContent = visibility === 'public'
+          ? 'Listed in the server browser. Anyone can join.'
+          : 'Hidden from the server browser. Join with the room code.';
+      }
+    }
+    if (visibilityGroup) {
+      visibilityGroup.addEventListener('click', function (e) {
+        var val = e.target && e.target.getAttribute ? e.target.getAttribute('data-val') : null;
+        if (val) setVisibility(val);
+      });
+    }
+    setVisibility('public');
+
+    function renderServers(rooms) {
+      if (!serverListEl) return;
+      serverListEl.textContent = '';
+      if (!rooms || !rooms.length) {
+        var empty = document.createElement('div');
+        empty.className = 'mp-empty';
+        empty.textContent = 'No public lobbies. Create one!';
+        serverListEl.appendChild(empty);
+        return;
+      }
+      rooms.forEach(function (room) {
+        var row = document.createElement('div');
+        row.className = 'mp-server';
+
+        var info = document.createElement('div');
+        info.className = 'mp-server-info';
+
+        var name = document.createElement('div');
+        name.className = 'mp-server-name';
+        name.textContent = room.name || 'Lobby';
+
+        var meta = document.createElement('div');
+        meta.className = 'mp-server-meta';
+        meta.textContent = (room.host || 'Pilot') + ' · ' +
+          room.players + '/' + room.max + ' · ' + room.room;
+
+        info.appendChild(name);
+        info.appendChild(meta);
+
+        var btn = document.createElement('button');
+        btn.className = 'mp-btn';
+        btn.textContent = room.full ? 'FULL' : 'JOIN';
+        btn.disabled = !!room.full;
+        btn.addEventListener('click', function () { joinRoom(room.room); });
+
+        row.appendChild(info);
+        row.appendChild(btn);
+        serverListEl.appendChild(row);
+      });
+    }
+
+    function refreshServers() {
+      if (!window.Net || !Net.listServers) return;
+      Net.listServers().then(renderServers).catch(function () {
+        if (!serverListEl) return;
+        serverListEl.textContent = '';
+        var empty = document.createElement('div');
+        empty.className = 'mp-empty';
+        empty.textContent = 'Server list unavailable.';
+        serverListEl.appendChild(empty);
+      });
+    }
+
+    function joinRoom(code) {
+      if (!window.Net) { setStatus('multiplayer unavailable'); return; }
+      code = (code || '').trim().toUpperCase();
+      if (!code) { setStatus('enter a room code'); return; }
+      var nick = (document.getElementById('mp-nick-input').value || 'Pilot').trim();
+      localStorage.setItem('fpv-nickname', nick);
+      myNickname = nick;
+      if (window.MP) MP.setLocalNickname(myNickname);
+      setStatus('joining…');
+      Net.join(code, settings.loadout, myNickname).catch(function (e) {
+        setStatus('join failed: ' + (e.message || 'error'));
+      });
+    }
+
+    var refreshBtn = document.getElementById('mp-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', refreshServers);
+
+    setInterval(function () {
+      if (!mpPanel.classList.contains('hidden') && !(window.Net && Net.isConnected())) {
+        refreshServers();
+      }
+    }, 5000);
+
     var isHost = false;
 
     function loadMapFromUrl(url) {
@@ -1602,7 +1710,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     mpBtn.addEventListener('click', function () {
       mpPanel.classList.remove('hidden');
       if (window.Net && Net.isConnected()) showInRoom();
-      else showConnect();
+      else { showConnect(); refreshServers(); }
     });
     document.getElementById('mp-close').addEventListener('click', function () {
       mpPanel.classList.add('hidden');
@@ -1615,7 +1723,14 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       isHost = (msg.t === 'created');
       document.getElementById('mp-share-map-row').style.display = isHost ? '' : 'none';
       document.getElementById('mp-room-code').textContent = msg.room;
-      renderPlayers(msg.others || [], msg.pid);
+      var titleEl = document.getElementById('mp-lobby-title');
+      if (titleEl) titleEl.textContent = msg.name || 'Lobby';
+      var badge = document.getElementById('mp-visibility-badge');
+      if (badge) {
+        badge.textContent = msg.public ? 'PUBLIC' : 'PRIVATE';
+        badge.className = 'mp-badge ' + (msg.public ? 'public' : 'private');
+      }
+      renderPlayers(msg.others || []);
       if (msg.others) {
         msg.others.forEach(function (o) {
           if (window.MP) MP.spawnRemote(o.pid, o.loadout, o.nickname);
@@ -1628,32 +1743,26 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (b) b.classList.add('hidden');
     }
 
-    /* CREATE ROOM */
+    /* CREATE LOBBY */
     document.getElementById('mp-create').addEventListener('click', function () {
       if (!window.Net) { setStatus('multiplayer unavailable'); return; }
       var nick = (document.getElementById('mp-nick-input').value || 'Pilot').trim();
       localStorage.setItem('fpv-nickname', nick);
       myNickname = nick;
       if (window.MP) MP.setLocalNickname(myNickname);
+      var lobbyName = (document.getElementById('mp-lobby-name').value || '').trim();
       setStatus('creating…');
-      Net.create(settings.loadout, myNickname).catch(function (e) {
+      Net.create(settings.loadout, myNickname, {
+        public: visibility === 'public',
+        name: lobbyName
+      }).catch(function (e) {
         setStatus('create failed: ' + (e.message || 'error'));
       });
     });
 
-    /* JOIN ROOM */
+    /* JOIN ROOM (by code) */
     document.getElementById('mp-join').addEventListener('click', function () {
-      if (!window.Net) { setStatus('multiplayer unavailable'); return; }
-      var code = (document.getElementById('mp-code-input').value || '').trim().toUpperCase();
-      if (!code) { setStatus('enter a room code'); return; }
-      var nick = (document.getElementById('mp-nick-input').value || 'Pilot').trim();
-      localStorage.setItem('fpv-nickname', nick);
-      myNickname = nick;
-      if (window.MP) MP.setLocalNickname(myNickname);
-      setStatus('joining…');
-      Net.join(code, settings.loadout, myNickname).catch(function (e) {
-        setStatus('join failed: ' + (e.message || 'error'));
-      });
+      joinRoom(document.getElementById('mp-code-input').value);
     });
 
     /* LEAVE ROOM */
@@ -1662,6 +1771,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (window.MP) MP.clearAll();
       isHost = false;
       showConnect();
+      refreshServers();
       setStatus('left room');
     });
 
@@ -1698,6 +1808,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         if (window.MP) MP.clearAll();
         isHost = false;
         showConnect();
+        refreshServers();
         setStatus('Room closed. Disconnected.');
         var b = document.getElementById('net-badge');
         if (b) { b.className = 'net-badge'; b.textContent = 'ROOM LOST'; b.classList.remove('hidden'); }

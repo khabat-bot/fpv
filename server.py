@@ -9,19 +9,22 @@ Then open http://localhost:8080
 Endpoints:
     GET  /              static files under this directory
     GET  /mp-status     {"enabled": true, "version": 1, "rooms": N}
+    GET  /servers       public lobby browser data
     WS   /ws            multiplayer relay
 
 Protocol (JSON messages):
     Client -> Server:
-        {"t":"create", "loadout":{...}}
+        {"t":"create", "loadout":{...}, "public":bool, "name":"..."}
         {"t":"join",   "room":"ABC123", "loadout":{...}}
         {"t":"state",  "p":[x,y,z], "q":[x,y,z,w], "v":[x,y,z],
                        "armed":bool, "crashed":bool}
         {"t":"leave"}
 
     Server -> Client:
-        {"t":"created","room":"ABC123","pid":"<id>"}
+        {"t":"created","room":"ABC123","pid":"<id>",
+                      "public":bool,"name":"..."}
         {"t":"joined","room":"ABC123","pid":"<id>",
+                      "public":bool,"name":"...",
                       "others":[{"pid":"...","loadout":{...}}, ...]}
         {"t":"peer_join","pid":"<id>","loadout":{...}}
         {"t":"peer_leave","pid":"<id>"}
@@ -40,7 +43,8 @@ WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 MAX_MSG_BYTES = 4096
 MAX_ROOM_SIZE = 8
 
-# Rooms: { room_id: {'host': pid, 'players': {pid: {'ws': writer, 'loadout': obj}}} }
+# Rooms: { room_id: {'host': pid, 'public': bool, 'name': str,
+#                     'players': {pid: {'ws': writer, 'loadout': obj}}} }
 rooms = {}
 
 
@@ -50,6 +54,15 @@ def gen_code():
 
 def gen_pid():
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+
+
+def clean_text(value, fallback='', limit=32):
+    """Trim client-supplied text, coerce to str, and cap its length."""
+    if value is None:
+        value = ''
+    elif not isinstance(value, str):
+        value = str(value)
+    return value.strip()[:limit] or fallback
 
 
 # --- WebSocket helpers ---------------------------------------------------
@@ -150,6 +163,40 @@ async def handle_client(reader, writer):
     if path.endswith('mp-status'):
         body = json.dumps({
             'enabled': True, 'version': 1, 'rooms': len(rooms)
+        }).encode('utf-8')
+        writer.write(
+            b'HTTP/1.1 200 OK\r\n'
+            b'Content-Type: application/json\r\n'
+            b'Cache-Control: no-store\r\n'
+            b'Access-Control-Allow-Origin: *\r\n'
+            b'Content-Length: ' + str(len(body)).encode('ascii') + b'\r\n'
+            b'\r\n' + body
+        )
+        try: await writer.drain()
+        except Exception: pass
+        try: writer.close()
+        except Exception: pass
+        return
+
+    # /servers — public lobby browser
+    if method == 'GET' and path.split('?', 1)[0].endswith('/servers'):
+        public_rooms = []
+        for code, room in rooms.items():
+            if not room.get('public'):
+                continue
+            players = room['players']
+            host = players.get(room.get('host'))
+            public_rooms.append({
+                'room': code,
+                'name': room.get('name') or 'Lobby',
+                'host': (host or {}).get('nickname') or 'Pilot',
+                'players': len(players),
+                'max': MAX_ROOM_SIZE,
+                'full': len(players) >= MAX_ROOM_SIZE,
+            })
+        public_rooms.sort(key=lambda r: (r['name'].lower(), r['room']))
+        body = json.dumps({
+            'enabled': True, 'rooms': public_rooms
         }).encode('utf-8')
         writer.write(
             b'HTTP/1.1 200 OK\r\n'
@@ -294,11 +341,23 @@ async def ws_session(reader, writer):
                 code = gen_code()
                 while code in rooms:
                     code = gen_code()
-                rooms[code] = {'host': pid, 'players': {}, 'map_url': None}
-                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout'), 'nickname': msg.get('nickname', 'Pilot')}
+                nickname = clean_text(msg.get('nickname'), 'Pilot')
+                name = clean_text(msg.get('name'), nickname + "'s lobby")
+                public = bool(msg.get('public'))
+                rooms[code] = {
+                    'host': pid,
+                    'players': {},
+                    'map_url': None,
+                    'public': public,
+                    'name': name,
+                }
+                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout'), 'nickname': nickname}
                 room_id = code
-                await ws_send_json(writer, {'t': 'created', 'room': code, 'pid': pid, 'nickname': msg.get('nickname', 'Pilot')})
-                print('[room] create %s by %s' % (code, pid))
+                await ws_send_json(writer, {
+                    't': 'created', 'room': code, 'pid': pid, 'nickname': nickname,
+                    'public': public, 'name': name
+                })
+                print('[room] create %s "%s" (%s) by %s' % (code, name, 'public' if public else 'private', pid))
 
             elif t == 'join':
                 code = (msg.get('room') or '').strip().upper()
@@ -309,21 +368,25 @@ async def ws_session(reader, writer):
                     await ws_send_json(writer, {'t': 'error', 'msg': 'room full'})
                     continue
                 room_id = code
-                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout'), 'nickname': msg.get('nickname', 'Pilot')}
+                nickname = clean_text(msg.get('nickname'), 'Pilot')
+                rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout'), 'nickname': nickname}
                 others = [
                     {'pid': op, 'loadout': rooms[code]['players'][op]['loadout'], 'nickname': rooms[code]['players'][op].get('nickname', 'Pilot')}
                     for op in rooms[code]['players'] if op != pid
                 ]
                 map_url = rooms[code].get('map_url')
                 await ws_send_json(writer, {
-                    't': 'joined', 'room': code, 'pid': pid, 'others': others, 'map_url': map_url
+                    't': 'joined', 'room': code, 'pid': pid, 'others': others,
+                    'map_url': map_url,
+                    'public': bool(rooms[code].get('public')),
+                    'name': rooms[code].get('name') or 'Lobby'
                 })
                 for op, p in list(rooms[code]['players'].items()):
                     if op == pid:
                         continue
                     try:
                         await ws_send_json(p['ws'], {
-                            't': 'peer_join', 'pid': pid, 'loadout': msg.get('loadout'), 'nickname': msg.get('nickname', 'Pilot')
+                            't': 'peer_join', 'pid': pid, 'loadout': msg.get('loadout'), 'nickname': nickname
                         })
                     except Exception:
                         pass

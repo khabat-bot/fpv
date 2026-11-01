@@ -4,9 +4,10 @@
    Public API:
      Net.on(event, fn)          // 'joined'|'peer_join'|'peer_leave'|
                                 // 'state'|'error'|'disconnected'
-     Net.create(loadout)        // Promise<{room, pid}>
+     Net.create(loadout, nickname, options) // options: {public, name}
      Net.join(room, loadout)    // Promise<{room, pid, others}>
      Net.leave()
+     Net.listServers()          // Promise<[{room, name, host, players, max, full}]>
      Net.sendState(drone)       // throttled to 30 Hz internally
      Net.tick(dt)               // call every frame; drives send throttle
      Net.isConnected()
@@ -157,11 +158,25 @@ window.Net = (function () {
     }, reconnectDelay);
   }
 
-  function create(loadout, nickname) {
-    return connect('create', { loadout: loadout || null, nickname: nickname || 'Pilot' });
+  function create(loadout, nickname, options) {
+    options = options || {};
+    return connect('create', {
+      loadout: loadout || null,
+      nickname: nickname || 'Pilot',
+      public: !!options.public,
+      name: options.name || ''
+    });
   }
   function join(room, loadout, nickname) {
     return connect('join', { room: room, loadout: loadout || null, nickname: nickname || 'Pilot' });
+  }
+  function listServers() {
+    return fetch('./servers', { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('server list unavailable');
+      return r.json();
+    }).then(function (j) {
+      return (j && j.rooms) || [];
+    });
   }
   function uploadMap(room, file) {
     return fetch('/upload-map?room=' + encodeURIComponent(room), {
@@ -203,6 +218,7 @@ window.Net = (function () {
     create: create,
     join: join,
     leave: leave,
+    listServers: listServers,
     sendState: sendState,
     tick: tick,
     isConnected: function () { return connected; },
