@@ -338,6 +338,26 @@
 
 <input id="map-file" type="file" accept=".glb,.gltf" style="display:none" />
 <input id="mp-map-file" type="file" accept=".glb,.gltf" style="display:none" />
+
+<!-- ======================= REPLAY ============================ -->
+<div id="replay-panel" class="hidden">
+  <div class="rp-inner">
+    <div class="sp-header">
+      <span>REPLAY</span>
+      <span class="sp-close" id="rp-close">&#x2715;</span>
+    </div>
+    <div id="rp-status" class="rp-status">NO RECORDING</div>
+    <div class="rp-actions">
+      <button id="rp-record"  class="sp-opt wide">RECORD</button>
+      <button id="rp-preview" class="sp-opt wide" disabled>PREVIEW</button>
+      <button id="rp-export"  class="sp-opt wide" disabled>EXPORT</button>
+      <button id="rp-import"  class="sp-opt wide">IMPORT</button>
+      <button id="rp-clear"   class="sp-opt wide">CLEAR</button>
+    </div>
+    <div class="rp-hint">RECORD a flight, then PREVIEW it. The camera follows the recorded drone. Export saves a .json file you can import later.</div>
+    <input id="rp-file" type="file" accept=".json,application/json" style="display:none" />
+  </div>
+</div>
 <!-- Multi-CDN Three.js bootstrap + on-screen error reporting -->
 <!-- Local Dependencies (MIT licensed) -->
 <script src="vendor/three.min.js"></script>

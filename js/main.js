@@ -297,13 +297,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     crashShown = false;
     HUD.showCrash(false);
     updateArmButton();
-    /* Stop replay on respawn */
-    if (window.Replay && Replay.isPlaying()) {
-        Replay.stop();
-        var _br = document.getElementById('btn-replay');
-        if (_br) { _br.textContent = 'REPLAY'; _br.classList.remove('on'); }
-        if (window.HUD && HUD.setStickOverride) HUD.setStickOverride(null);
+    /* Stop recording/preview on respawn */
+    if (window.Replay) {
+        if (Replay.isRecording()) Replay.stopRecording();
+        if (Replay.isPreviewing()) Replay.stopPreview();
+        refreshReplayUI();
     }
+    chaseInit = false;
   }
 
   btnArm.addEventListener('click', toggleArm);
@@ -327,25 +327,157 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   });
   btnSound.classList.add('on');
   
-  /* ---- REPLAY button ---- */
+  /* ---- Replay panel ---- */
   var btnReplay = document.getElementById('btn-replay');
-  if (btnReplay) {
-      btnReplay.addEventListener('click', function () {
-          if (window.Replay) {
-              if (Replay.isPlaying()) {
-                  Replay.stop();
-                  btnReplay.textContent = 'REPLAY';
-                  btnReplay.classList.remove('on');
-                  if (window.HUD && HUD.setStickOverride) HUD.setStickOverride(null);
-              } else {
-                  if (Replay.start()) {
-                      btnReplay.textContent = 'STOP';
-                      btnReplay.classList.add('on');
-                  }
-              }
-          }
-      });
+  var replayPanel = document.getElementById('replay-panel');
+  var rpStatus = document.getElementById('rp-status');
+  var rpRecord = document.getElementById('rp-record');
+  var rpPreview = document.getElementById('rp-preview');
+  var rpExport = document.getElementById('rp-export');
+  var rpImport = document.getElementById('rp-import');
+  var rpClear = document.getElementById('rp-clear');
+  var rpClose = document.getElementById('rp-close');
+  var rpFile = document.getElementById('rp-file');
+
+  function fmtReplayTime(sec) {
+    sec = Math.max(0, sec || 0);
+    var m = Math.floor(sec / 60);
+    var s = sec - m * 60;
+    return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
   }
+
+  function refreshReplayUI() {
+    if (!replayPanel || !rpStatus) return;
+    var st = (window.Replay && Replay.getState) ? Replay.getState()
+      : { recording: false, previewing: false, hasData: false, duration: 0, time: 0 };
+
+    rpStatus.classList.toggle('recording', st.recording);
+    rpStatus.classList.toggle('previewing', st.previewing);
+    document.documentElement.classList.toggle('replay-preview', st.previewing);
+    if (st.recording) {
+      rpStatus.textContent = 'REC ' + fmtReplayTime(st.duration);
+    } else if (st.previewing) {
+      rpStatus.textContent = 'PREVIEW ' + fmtReplayTime(st.time) + ' / ' + fmtReplayTime(st.duration);
+    } else if (st.hasData) {
+      rpStatus.textContent = 'READY \u00b7 ' + fmtReplayTime(st.duration);
+    } else {
+      rpStatus.textContent = 'NO RECORDING';
+    }
+
+    if (rpRecord) {
+      rpRecord.textContent = st.recording ? 'STOP RECORDING' : 'RECORD';
+      rpRecord.classList.toggle('on', st.recording);
+    }
+    if (rpPreview) {
+      rpPreview.textContent = st.previewing ? 'STOP PREVIEW' : 'PREVIEW';
+      rpPreview.classList.toggle('on', st.previewing);
+      rpPreview.disabled = (!st.hasData || st.recording) && !st.previewing;
+    }
+    if (rpExport) rpExport.disabled = !st.hasData || st.recording;
+    if (rpClear) rpClear.disabled = !st.hasData && !st.recording;
+    if (rpImport) rpImport.disabled = st.recording || st.previewing;
+
+    if (btnReplay) {
+      btnReplay.textContent = st.recording ? 'STOP REC' : (st.previewing ? 'STOP' : 'REPLAY');
+      btnReplay.classList.toggle('on', st.recording || st.previewing);
+    }
+  }
+
+  function openReplayPanel() {
+    if (!replayPanel) return;
+    replayPanel.classList.remove('hidden');
+    refreshReplayUI();
+  }
+  function closeReplayPanel() {
+    if (replayPanel) replayPanel.classList.add('hidden');
+  }
+
+  if (window.Replay) {
+    Replay.setOnChange(refreshReplayUI);
+  }
+
+  if (btnReplay) {
+    btnReplay.addEventListener('click', function () {
+      if (!window.Replay) return;
+      if (Replay.isRecording()) {
+        Replay.stopRecording();
+        openReplayPanel();
+      } else if (Replay.isPreviewing()) {
+        Replay.stopPreview();
+        openReplayPanel();
+      } else {
+        openReplayPanel();
+      }
+      refreshReplayUI();
+    });
+  }
+
+  if (rpRecord) {
+    rpRecord.addEventListener('click', function () {
+      if (!window.Replay) return;
+      if (Replay.isRecording()) {
+        Replay.stopRecording();
+        refreshReplayUI();
+      } else if (Replay.startRecording()) {
+        closeReplayPanel();
+      }
+    });
+  }
+
+  if (rpPreview) {
+    rpPreview.addEventListener('click', function () {
+      if (!window.Replay) return;
+      if (Replay.isPreviewing()) {
+        Replay.stopPreview();
+        refreshReplayUI();
+      } else if (Replay.startPreview()) {
+        closeReplayPanel();
+      }
+    });
+  }
+
+  if (rpExport) {
+    rpExport.addEventListener('click', function () {
+      if (window.Replay) Replay.exportFile();
+    });
+  }
+
+  if (rpImport) {
+    rpImport.addEventListener('click', function () {
+      if (rpFile) rpFile.click();
+    });
+  }
+
+  if (rpFile) {
+    rpFile.addEventListener('change', function (ev) {
+      var file = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (!file || !window.Replay) return;
+      Replay.importFile(file).then(function () {
+        refreshReplayUI();
+        rpStatus.textContent = 'IMPORTED \u00b7 ' + fmtReplayTime(Replay.getDuration());
+      }).catch(function (err) {
+        console.error('Replay import failed:', err);
+        rpStatus.textContent = 'IMPORT FAILED';
+      });
+    });
+  }
+
+  if (rpClear) {
+    rpClear.addEventListener('click', function () {
+      if (window.Replay) Replay.clear();
+      refreshReplayUI();
+    });
+  }
+
+  if (rpClose) rpClose.addEventListener('click', closeReplayPanel);
+  if (replayPanel) {
+    replayPanel.addEventListener('click', function (ev) {
+      if (ev.target === replayPanel) closeReplayPanel();
+    });
+  }
+
+  refreshReplayUI();
 
 
   /* -------------------- quality toggle ------------------- */
@@ -723,6 +855,7 @@ if (window.GhostTrail) GhostTrail.clear();
   let cameraMode = 'FPV';
   const chaseSmoothPos = new THREE.Vector3();
   let chaseInit = false;
+  let replayVisualHidden = false;
 
   function applyCameraMode() {
     const prev = cameraMode;
@@ -730,6 +863,10 @@ if (window.GhostTrail) GhostTrail.clear();
     if (prev !== cameraMode) chaseInit = false;
     if (window.DroneVisual && DroneVisual.setFPVMode) {
       DroneVisual.setFPVMode(cameraMode === 'FPV');
+      if (window.Replay && Replay.isPreviewing()) DroneVisual.setVisible(false);
+    }
+    if (window.Replay && Replay.setFPVMode) {
+      Replay.setFPVMode(cameraMode === 'FPV');
     }
   }
   function applyCamTilt() {
@@ -767,6 +904,7 @@ if (window.GhostTrail) GhostTrail.clear();
     if (!window.Loadout) return;
     Loadout.apply(settings.loadout);
     if (previewVisual) previewVisual.setLoadout(settings.loadout);
+    if (window.Replay && Replay.setLoadout) Replay.setLoadout(settings.loadout);
     saveSettings();
   }
 
@@ -1240,20 +1378,28 @@ if (window.GhostTrail) GhostTrail.clear();
 
     const state = Input.update(dt);
 
+    /* Freeze the live sim while a recording is being previewed; the
+       replay drone is advanced by Replay.update() further down. */
+    const previewWasActive = !!(window.Replay && Replay.isPreviewing());
+
     if (world.advanceFrame) world.advanceFrame();
 
-    accumulator += dt;
-    let steps = 0;
-    while (accumulator >= FIXED && steps < 16) {
-      drone.step(FIXED, state);
-      accumulator -= FIXED;
-      steps++;
+    if (previewWasActive) {
+      accumulator = 0;
+    } else {
+      accumulator += dt;
+      let steps = 0;
+      while (accumulator >= FIXED && steps < 16) {
+        drone.step(FIXED, state);
+        accumulator -= FIXED;
+        steps++;
+      }
+      if (steps >= 16) accumulator = 0;
     }
-    if (steps >= 16) accumulator = 0;
 
-    if (drone.armed && !drone.crashed) flightTime += dt;
+    if (!previewWasActive && drone.armed && !drone.crashed) flightTime += dt;
     /* Drills tick */
-    if (window.Drills && Drills.isActive()) Drills.tick(drone, dt);
+    if (!previewWasActive && window.Drills && Drills.isActive()) Drills.tick(drone, dt);
 
     /* Multiplayer — send our state at ~30 Hz (throttled inside Net),
        and advance remote drone interpolation. Zero cost when offline. */
@@ -1266,29 +1412,66 @@ if (window.GhostTrail) GhostTrail.clear();
       MP.updateLocal(drone, camera, cameraMode === 'FPV');
     }
 
+    /* Replay: capture frames while recording, advance preview playback. */
+    let replayPose = null;
+    let replayStick = null;
+    if (window.Replay) {
+      Replay.record(drone, state, dt);
+      if (Replay.isPreviewing()) Replay.update(dt);
+      if (Replay.isPreviewing()) {
+        replayPose = Replay.getPose();
+        replayStick = Replay.getStickState();
+      }
+    }
+    const replayActive = !!replayPose;
+
+    /* Hide the live drone while previewing, restore normal visibility
+       when preview ends. */
+    if (replayActive !== replayVisualHidden) {
+      replayVisualHidden = replayActive;
+      chaseInit = false;
+      if (window.DroneVisual && DroneVisual.setVisible) {
+        DroneVisual.setVisible(replayActive ? false : (cameraMode !== 'FPV'));
+      }
+    }
+
+    /* Camera/HUD/audio follow the replay drone while previewing. */
+    const viewDrone = replayPose ? {
+      position: replayPose.position,
+      quat: replayPose.quat,
+      velocity: { length: function () { return replayPose.speed; } },
+      armed: true,
+      crashed: false,
+      voltage: drone.voltage,
+      mahUsed: drone.mahUsed,
+      _packDeadLatched: drone._packDeadLatched,
+      _windTime: drone._windTime,
+      throttleIn: replayPose.stick.throttle
+    } : drone;
+
     /* Update drone visual to follow physics state */
     if (window.DroneVisual) DroneVisual.update(drone, state, dt);
 
     /* Camera — FPV / TOW / CHASE / ORBIT */
     if (cameraMode === 'FPV') {
-      tmpV.copy(camOffsetLocal).applyQuaternion(drone.quat);
-      camera.position.copy(drone.position).add(tmpV);
-      camera.quaternion.copy(drone.quat).multiply(camTilt);
+      tmpV.copy(camOffsetLocal).applyQuaternion(viewDrone.quat);
+      camera.position.copy(viewDrone.position).add(tmpV);
+      camera.quaternion.copy(viewDrone.quat).multiply(camTilt);
     } else if (cameraMode === 'TOW') {
       /* Rigid stick-cam: 0.15 up / 0.35 back in drone local frame.
          Orientation = drone quaternion → rolls/pitches/yaws with drone,
          looks forward, drone appears in lower-center of view. */
-      tmpV.set(0, 0.15, 0.35).applyQuaternion(drone.quat);
-      camera.position.copy(drone.position).add(tmpV);
-      camera.quaternion.copy(drone.quat);
+      tmpV.set(0, 0.15, 0.35).applyQuaternion(viewDrone.quat);
+      camera.position.copy(viewDrone.position).add(tmpV);
+      camera.quaternion.copy(viewDrone.quat);
     } else if (cameraMode === 'CHASE') {
       /* Smoothed chase — position-only smoothing, dt-independent,
          always looks at the drone directly. */
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(drone.quat);
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(viewDrone.quat);
       fwd.y = 0;
       if (fwd.lengthSq() < 0.01) fwd.set(0, 0, -1);
       fwd.normalize();
-      const targetPos = new THREE.Vector3().copy(drone.position)
+      const targetPos = new THREE.Vector3().copy(viewDrone.position)
         .addScaledVector(fwd, -chaseDist);
       targetPos.y += 0.4 + chaseDist * 0.15;
       if (!chaseInit) {
@@ -1300,20 +1483,20 @@ if (window.GhostTrail) GhostTrail.clear();
       }
       camera.position.copy(chaseSmoothPos);
       camera.up.set(0, 1, 0);
-      camera.lookAt(drone.position);
+      camera.lookAt(viewDrone.position);
     } else if (cameraMode === 'ORBIT') {
       const _t = performance.now() * 0.001;
       const _r = 1.6;
       const orbitPos = new THREE.Vector3(
-        drone.position.x + Math.cos(_t * 0.4) * _r,
-        drone.position.y + 0.6,
-        drone.position.z + Math.sin(_t * 0.4) * _r
+        viewDrone.position.x + Math.cos(_t * 0.4) * _r,
+        viewDrone.position.y + 0.6,
+        viewDrone.position.z + Math.sin(_t * 0.4) * _r
       );
       const d = camera.position.distanceTo(orbitPos);
       const k = d > 5 ? 1.0 : (1 - Math.exp(-dt * 12));
       camera.position.lerp(orbitPos, k);
       camera.up.set(0, 1, 0);
-      camera.lookAt(drone.position);
+      camera.lookAt(viewDrone.position);
     }
 
     /* Camera micro-shake — FPV + TOW only.
@@ -1323,7 +1506,7 @@ if (window.GhostTrail) GhostTrail.clear();
        Amplitude scales with throttle + speed; wind presets amplify.
        All three axes centred around zero, so no drift.
        TOW gets 0.7× because the camera stick damps the vibration. */
-    if ((cameraMode === 'FPV' || cameraMode === 'TOW') && shakeAmt > 0) {
+    if (!replayActive && (cameraMode === 'FPV' || cameraMode === 'TOW') && shakeAmt > 0) {
       const spd = drone.velocity.length();
       const thr = drone.throttleIn || 0;
       const modeMul = (cameraMode === 'TOW') ? 0.7 : 1.0;
@@ -1350,20 +1533,14 @@ if (window.GhostTrail) GhostTrail.clear();
       world.ground.position.z = Math.round(camera.position.z / TILE) * TILE;
     }
 
-    HUD.update(drone, camera, flightTime, state.throttle, state);
-/* Update ghost trail */
-if (window.GhostTrail) GhostTrail.update(drone);
-/* Replay record + playback */
-if (window.Replay) {
-    Replay.record(drone, state, dt);
-    if (Replay.isPlaying()) {
-        Replay.update(dt);
-        if (window.HUD && HUD.setStickOverride) {
-            HUD.setStickOverride(Replay.getStickState());
-        }
-    }
-}
-    Audio.update(drone, state, camera);
+    const hudStick = replayStick || state;
+    HUD.update(viewDrone, camera, flightTime, hudStick.throttle, hudStick);
+    if (window.HUD && HUD.setStickOverride) HUD.setStickOverride(replayStick);
+
+    /* Update ghost trail (only for the live drone) */
+    if (!replayActive && window.GhostTrail) GhostTrail.update(drone);
+
+    Audio.update(viewDrone, hudStick, camera);
 
     /* Loadout preview — only when the settings panel is open and the
        LOADOUT tab is showing. initPreview() runs on first visit. */
@@ -1373,7 +1550,7 @@ if (window.Replay) {
       if (previewRenderer) renderPreview(dt);
     }
 
-    if (drone.crashed && !crashShown) {
+    if (!replayActive && drone.crashed && !crashShown) {
       crashShown = true;
       Audio.crashSound();
       HUD.showCrash(true);

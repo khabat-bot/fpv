@@ -1512,3 +1512,88 @@ border-color: rgba(255, 160, 80, 0.85);
 color: #ffd0a0;
 box-shadow: 0 0 14px rgba(255, 140, 60, 0.25);
 }
+
+/* ============================================================
+Replay panel (appended — additive)
+============================================================ */
+#replay-panel {
+position: fixed;
+inset: 0;
+z-index: 100;
+display: flex;
+align-items: center;
+justify-content: center;
+padding: 20px;
+background: rgba(0, 5, 15, 0.78);
+backdrop-filter: blur(6px);
+-webkit-backdrop-filter: blur(6px);
+box-sizing: border-box;
+}
+#replay-panel.hidden { display: none; }
+
+#replay-panel .rp-inner {
+background: rgba(8, 18, 30, 0.94);
+border: 1px solid rgba(140, 200, 255, 0.35);
+border-radius: 12px;
+padding: 16px 20px;
+max-width: 360px;
+width: 100%;
+max-height: 85vh;
+overflow-y: auto;
+color: var(--osd);
+font-size: 12px;
+letter-spacing: 0.06em;
+-webkit-overflow-scrolling: touch;
+touch-action: pan-y;
+overscroll-behavior: contain;
+}
+
+.rp-status {
+text-align: center;
+font-size: 12px;
+font-weight: bold;
+letter-spacing: 0.16em;
+padding: 12px 10px;
+margin-bottom: 14px;
+border-radius: 8px;
+background: rgba(120, 180, 255, 0.08);
+border: 1px solid rgba(120, 180, 255, 0.18);
+color: var(--osd);
+font-variant-numeric: tabular-nums;
+}
+.rp-status.recording {
+background: rgba(160, 40, 40, 0.18);
+border-color: rgba(255, 120, 120, 0.50);
+color: #ffb0b0;
+}
+.rp-status.previewing {
+background: rgba(30, 140, 80, 0.18);
+border-color: rgba(110, 242, 160, 0.45);
+color: #b6ffd0;
+}
+
+.rp-actions {
+display: flex;
+flex-direction: column;
+gap: 8px;
+}
+.rp-actions .sp-opt {
+padding: 10px 12px;
+font-size: 11px;
+}
+.rp-actions .sp-opt:disabled {
+opacity: 0.35;
+cursor: default;
+}
+
+.rp-hint {
+margin-top: 14px;
+font-size: 10px;
+line-height: 1.6;
+letter-spacing: 0.04em;
+color: var(--osd-dim);
+text-align: center;
+}
+
+/* Previewing a recording freezes the live controls. */
+.replay-preview .stick { display: none; }
