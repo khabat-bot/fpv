@@ -45,8 +45,6 @@
 <div id="buttons">
   <button id="btn-arm"    class="btn">ARM</button>
   <button id="btn-reset"  class="btn">RESET</button>
-  <button id="btn-resume" class="btn tiny" style="display:none">RESUME</button>
-  <button id="btn-forget" class="btn tiny" style="display:none">FORGET</button>
   <button id="btn-settings" class="btn tiny">SETTINGS</button>
   <button id="btn-replay" class="btn tiny">REPLAY</button>
   <button id="btn-mp" class="btn tiny" style="display:none">MULTIPLAYER</button>
@@ -129,7 +127,16 @@
         </div>
       </div>
       <div class="sp-row">
-        <button id="btn-map" class="sp-opt wide">LOAD MAP</button>
+        <button id="btn-map" class="sp-opt wide">IMPORT MAP (.GLB/.GLTF)</button>
+      </div>
+      <div class="sp-row">
+        <button id="btn-unload-map" class="sp-opt wide">UNLOAD CUSTOM MAP</button>
+      </div>
+      <div class="sp-section" id="map-browser">
+        <div class="sp-section-title">SAVED MAPS</div>
+        <div id="map-list" class="map-list">
+          <div class="map-empty">No saved maps.</div>
+        </div>
       </div>
     </div>
     <div class="sp-pane" data-pane="CAMERA">

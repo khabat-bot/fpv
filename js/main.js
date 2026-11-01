@@ -36,11 +36,30 @@
   const camera = new THREE.PerspectiveCamera(100, 1, 0.08, 2000);
 
   /* --------------------------- world --------------------------------- */
+  function disposeWorldObjects(w) {
+    if (!w) return;
+    try {
+      if (w.root && w.root.parent) scene.remove(w.root);
+    } catch(e){}
+    try {
+      if (w.sky && w.sky.parent) scene.remove(w.sky);
+    } catch(e){}
+    try {
+      if (w.sun && w.sun.parent) scene.remove(w.sun);
+    } catch(e){}
+    try {
+      if (w.hemi && w.hemi.parent) scene.remove(w.hemi);
+    } catch(e){}
+    try {
+      if (w.fill && w.fill.parent) scene.remove(w.fill);
+    } catch(e){}
+    try {
+      if (typeof w.dispose === 'function') w.dispose();
+    } catch(e){}
+  }
+
   let world = World.build(scene);
-  /* Environment-preset refs — cached here so applyEnv() stays valid
-     even after loadMapFromFile() replaces `world`. The scene lights
-     survive map loads (they're added to scene, not to world.root),
-     so mutating these objects keeps the env preset authoritative. */
+  /* Environment-preset refs */
   let envSun    = world.sun    || null;
   let envHemi   = world.hemi   || null;
   let envFill   = world.fill   || null;
@@ -274,8 +293,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   const btnSound = document.getElementById('btn-sound');
   const btnMap = document.getElementById('btn-map');
   const mapInput = document.getElementById('map-file');
-  const btnResume = document.getElementById('btn-resume');
-  const btnForget = document.getElementById('btn-forget');
+  const btnUnloadMap = document.getElementById('btn-unload-map');
   const btnGfx = document.getElementById('btn-gfx');
 
   function updateArmButton() {
@@ -641,14 +659,15 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     });
   }
 
-  /* -------------------- IndexedDB persistence ------------------- */
+  /* -------------------- IndexedDB map library ------------------- */
   const IDB_NAME = 'fpv-sim';
   const IDB_STORE = 'maps';
-  const IDB_KEY = 'lastMap';
+  const IDB_KEY_LAST = 'lastMap';
+  const MAP_LIB_KEY = 'mapLibrary';
 
   function idbOpen() {
     return new Promise((res, rej) => {
-      const req = indexedDB.open(IDB_NAME, 1);
+      const req = indexedDB.open(IDB_NAME, 2);
       req.onupgradeneeded = () => {
         if (!req.result.objectStoreNames.contains(IDB_STORE)) {
           req.result.createObjectStore(IDB_STORE);
@@ -659,36 +678,90 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     });
   }
 
-  async function idbSave(file) {
-    try {
-      const db = await idbOpen();
-      return await new Promise((res, rej) => {
-        let tx;
-        try {
-          tx = db.transaction(IDB_STORE, 'readwrite');
-          tx.objectStore(IDB_STORE).put({
-            name: file.name, size: file.size,
-            savedAt: Date.now(), data: file
-          }, IDB_KEY);
-        } catch (e) { rej(e); return; }
-        tx.oncomplete = () => res(true);
-        tx.onerror = () => rej(tx.error || new Error('tx error'));
-        tx.onabort = () => rej(tx.error || new Error('tx aborted'));
-      });
-    } catch (e) {
-      console.warn('IDB save failed (silent):', e && e.message || e);
-      return false;
-    }
+  function uid() {
+    return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   }
 
-  async function idbLoad() {
+  async function idbGetMapLibrary() {
     try {
       const db = await idbOpen();
       return await new Promise((res, rej) => {
         let tx;
         try {
           tx = db.transaction(IDB_STORE, 'readonly');
-          tx.objectStore(IDB_STORE).get(IDB_KEY).onsuccess = (ev) => res(ev.target.result || null);
+          tx.objectStore(IDB_STORE).get(MAP_LIB_KEY).onsuccess = (ev) => {
+            res((ev.target.result && ev.target.result.items) || []);
+          };
+        } catch (e) { rej(e); return; }
+        tx.onerror = () => rej(tx.error || new Error('tx error'));
+      });
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function idbSaveMapLibrary(items) {
+    try {
+      const db = await idbOpen();
+      return await new Promise((res, rej) => {
+        let tx;
+        try {
+          tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put({ items: items || [] }, MAP_LIB_KEY);
+        } catch (e) { rej(e); return; }
+        tx.oncomplete = () => res(true);
+        tx.onerror = () => rej(tx.error || new Error('tx error'));
+        tx.onabort = () => rej(tx.error || new Error('tx aborted'));
+      });
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function idbPutMapEntry(entry) {
+    try {
+      const items = await idbGetMapLibrary();
+      const list = items.filter(i => i.id !== entry.id);
+      list.unshift({
+        id: entry.id,
+        name: entry.name,
+        size: entry.size,
+        savedAt: entry.savedAt
+      });
+      let dataToStore = entry.data;
+      if (entry.data && typeof entry.data.arrayBuffer === 'function') {
+        try {
+          dataToStore = await entry.data.arrayBuffer();
+        } catch (e) {
+          // fall through
+        }
+      }
+      const db = await idbOpen();
+      return await new Promise((res, rej) => {
+        let tx;
+        try {
+          tx = db.transaction(IDB_STORE, 'readwrite');
+          const store = tx.objectStore(IDB_STORE);
+          store.put(dataToStore, 'map:' + entry.id);
+          store.put({ items: list }, MAP_LIB_KEY);
+        } catch (e) { rej(e); return; }
+        tx.oncomplete = () => res(true);
+        tx.onerror = () => rej(tx.error || new Error('tx error'));
+        tx.onabort = () => rej(tx.error || new Error('tx aborted'));
+      });
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function idbGetMapData(id) {
+    try {
+      const db = await idbOpen();
+      return await new Promise((res, rej) => {
+        let tx;
+        try {
+          tx = db.transaction(IDB_STORE, 'readonly');
+          tx.objectStore(IDB_STORE).get('map:' + id).onsuccess = (ev) => res(ev.target.result || null);
         } catch (e) { rej(e); return; }
         tx.onerror = () => rej(tx.error || new Error('tx error'));
       });
@@ -697,57 +770,195 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     }
   }
 
-  async function idbForget() {
+  async function idbRemoveMap(id) {
     try {
       const db = await idbOpen();
+      const items = await idbGetMapLibrary();
+      const next = items.filter(i => i.id !== id);
       return await new Promise((res, rej) => {
         let tx;
         try {
           tx = db.transaction(IDB_STORE, 'readwrite');
-          tx.objectStore(IDB_STORE).delete(IDB_KEY);
+          const store = tx.objectStore(IDB_STORE);
+          store.delete('map:' + id);
+          store.put({ items: next }, MAP_LIB_KEY);
         } catch (e) { rej(e); return; }
         tx.oncomplete = () => res(true);
         tx.onerror = () => rej(tx.error || new Error('tx error'));
+        tx.onabort = () => rej(tx.error || new Error('tx aborted'));
       });
     } catch (e) {
       return false;
     }
   }
 
-  idbLoad().then(saved => {
-    if (saved && saved.data) {
-      btnResume.style.display = '';
-      btnResume.textContent = 'RESUME: ' + saved.name.replace(/\.[^.]+$/, '').slice(0, 10);
-      btnResume.onclick = () => {
-        const file = new File([saved.data], saved.name, { type: 'model/gltf-binary' });
-        loadMapFromFile(file, false);
-      };
-    }
-  }).catch(err => {
-    console.warn('IDB load failed (silent):', err && err.message || err);
-  });
+  // Migration from old single-map storage
+  async function migrateOldMap() {
+    try {
+      const db = await idbOpen();
+      const old = await new Promise((res, rej) => {
+        let tx;
+        try {
+          tx = db.transaction(IDB_STORE, 'readonly');
+          tx.objectStore(IDB_STORE).get(IDB_KEY_LAST).onsuccess = (ev) => res(ev.target.result || null);
+        } catch (e) { rej(e); return; }
+        tx.onerror = () => rej(tx.error || new Error('tx error'));
+      });
+      if (old && old.data) {
+        const lib = await idbGetMapLibrary();
+        if (!lib.length) {
+          const id = uid();
+          await idbPutMapEntry({
+            id: id,
+            name: old.name || 'imported.glb',
+            size: old.size || 0,
+            savedAt: old.savedAt || Date.now(),
+            data: old.data
+          });
+        }
+        // Remove old key to avoid confusion
+        try {
+          const db2 = await idbOpen();
+          const tx2 = db2.transaction(IDB_STORE, 'readwrite');
+          tx2.objectStore(IDB_STORE).delete(IDB_KEY_LAST);
+        } catch (e) {}
+      }
+    } catch (e) {}
+  }
+
+  migrateOldMap().catch(()=>{});
 
   /* -------------------- map loading ------------------- */
+  let currentCustomMapId = null;
+
+  function refreshMapBrowser() {
+    var listEl = document.getElementById('map-list');
+    if (!listEl) return;
+    idbGetMapLibrary().then(function(items) {
+      items = items || [];
+      listEl.textContent = '';
+      if (items.length === 0) {
+        var empty = document.createElement('div');
+        empty.className = 'map-empty';
+        empty.textContent = 'No saved maps.';
+        listEl.appendChild(empty);
+        return;
+      }
+      items.forEach(function(item) {
+        var row = document.createElement('div');
+        row.className = 'map-row' + (currentCustomMapId === item.id ? ' active' : '');
+        var name = document.createElement('div');
+        name.className = 'map-name';
+        name.textContent = (item.name || 'map').replace(/\.[^.]+$/, '');
+        name.title = item.name || '';
+        var meta = document.createElement('div');
+        meta.className = 'map-meta';
+        if (item.savedAt) {
+          try {
+            var d = new Date(item.savedAt);
+            meta.textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+          } catch(e) { meta.textContent = ''; }
+        }
+        var acts = document.createElement('div');
+        acts.className = 'map-acts';
+        var loadBtn = document.createElement('button');
+        loadBtn.className = 'map-act';
+        loadBtn.textContent = 'LOAD';
+        loadBtn.onclick = function(e) {
+          e.stopPropagation();
+          idbGetMapData(item.id).then(function(data) {
+            if (!data) return;
+            var blob;
+            if (data instanceof ArrayBuffer) {
+              blob = new Blob([data], { type: 'model/gltf-binary' });
+            } else if (data instanceof Blob) {
+              blob = data;
+            } else if (data && data.buffer && data.byteLength) {
+              blob = new Blob([data], { type: 'model/gltf-binary' });
+            } else {
+              blob = new Blob([data], { type: 'model/gltf-binary' });
+            }
+            var file = new File([blob], item.name || 'map.glb', { type: 'model/gltf-binary' });
+            currentCustomMapId = item.id;
+            loadMapFromFile(file, false);
+            refreshMapBrowser();
+          });
+        };
+        var delBtn = document.createElement('button');
+        delBtn.className = 'map-act danger';
+        delBtn.textContent = 'DELETE';
+        delBtn.onclick = function(e) {
+          e.stopPropagation();
+          if (!window.confirm('Delete saved map "' + name.textContent + '"?')) return;
+          if (currentCustomMapId === item.id && world && world.isCustomMap) {
+            unloadCustomMap();
+          }
+          idbRemoveMap(item.id).then(function() {
+            refreshMapBrowser();
+          });
+        };
+        acts.appendChild(loadBtn);
+        acts.appendChild(delBtn);
+        row.appendChild(name);
+        row.appendChild(meta);
+        row.appendChild(acts);
+        listEl.appendChild(row);
+      });
+    }).catch(function(){});
+  }
+
+  function unloadCustomMap() {
+    if (!world || !world.isCustomMap) {
+      if (btnUnloadMap) { btnUnloadMap.classList.remove('on'); btnUnloadMap.textContent = 'UNLOAD CUSTOM MAP'; }
+      return;
+    }
+    disposeWorldObjects(world);
+    world = World.build(scene);
+    envSun = world.sun || null;
+    envHemi = world.hemi || null;
+    envFill = world.fill || null;
+    envSkyMat = (world.skyMat || (world.sky && world.sky.material)) || null;
+    setFloorFromWorld(world);
+    window.__world = world;
+    drone.colliders = world.colliders;
+    drone.colliderIndex = world.colliderIndex || null;
+    if (typeof drone._disposeBVH === 'function') drone._disposeBVH();
+    drone._bvhColliderCount = -1;
+    setDPRCap(QUALITY[qualityName].dpr);
+    drone.reset(world.spawn.x, world.spawn.z);
+    if (window.GhostTrail) GhostTrail.clear();
+    flightTime = 0;
+    crashShown = false;
+    if (window.HUD) HUD.showCrash(false);
+    updateArmButton();
+    currentCustomMapId = null;
+    if (btnMap) { btnMap.textContent = 'IMPORT MAP (.GLB/.GLTF)'; btnMap.classList.remove('on'); }
+    if (btnUnloadMap) { btnUnloadMap.classList.remove('on'); btnUnloadMap.textContent = 'UNLOAD CUSTOM MAP'; }
+    applyEnv(settings.env || 'DAY');
+    refreshMapBrowser();
+  }
+
   function loadMapFromFile(file, saveToIDB) {
-    btnMap.textContent = 'LOADING…';
-    btnMap.classList.remove('off', 'on');
-    btnResume.style.display = 'none';
+    if (btnMap) { btnMap.textContent = 'LOADING…'; btnMap.classList.remove('off','on'); }
 
     MAP.load(file).then(result => {
-      if (world.dispose) world.dispose();
-
+      disposeWorldObjects(world);
+      // Clear any remaining lights
+      var lightsToRm = [];
+      scene.traverse(function(o){ if (o.isLight) lightsToRm.push(o); });
+      lightsToRm.forEach(function(l){ try { if(l.parent) l.parent.remove(l); } catch(e){} });
+      scene.fog = null;
       scene.background = new THREE.Color(0x87a9c8);
-      scene.fog = new THREE.Fog(0x87a9c8, 200, 900);
+
+      // Add simple lighting for custom maps
+      const hemiLight = new THREE.HemisphereLight(0xdcefff, 0x3a5030, 1.4);
+      scene.add(hemiLight);
+      const dirLight = new THREE.DirectionalLight(0xfff2d6, 1.2);
+      dirLight.position.set(150, 250, 100);
+      scene.add(dirLight);
+
       scene.add(result.scene);
 
-      /* Capture the freshly-loaded scene so the dispose closure can
-         remove it from the scene graph AND free its geometry/materials
-         when the next map (or procedural world) replaces it. Prior
-         versions assigned dispose: null, which meant loading map B on
-         top of map A left map A's meshes visible and its triangles
-         baked into map B's BVH. Textures are intentionally NOT
-         disposed — Three.js caches them across loads and manual
-         disposal risks cross-map texture loss. */
       const _loadedScene = result.scene;
       world = {
         root: _loadedScene,
@@ -758,63 +969,72 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         heightAt: result.heightAt,
         ground: null,
         spawn: new THREE.Vector3(0, 0, 0),
+        isCustomMap: true,
+        sun: dirLight,
+        hemi: hemiLight,
         dispose: function () {
-          scene.remove(_loadedScene);
+          try { scene.remove(_loadedScene); } catch(e) {}
+          try { if (hemiLight.parent) scene.remove(hemiLight); } catch(e){}
+          try { if (dirLight.parent) scene.remove(dirLight); } catch(e){}
           _loadedScene.traverse(function (o) {
             if (o.geometry) o.geometry.dispose();
             if (o.material) {
               if (Array.isArray(o.material)) {
-                o.material.forEach(function (m) { m.dispose(); });
+                o.material.forEach(function (m) { try { m.dispose(); } catch(e){} });
               } else {
-                o.material.dispose();
+                try { o.material.dispose(); } catch(e){}
               }
             }
           });
         }
       };
+      envSun = dirLight;
+      envHemi = hemiLight;
+      envFill = null;
+      envSkyMat = null;
       setFloorFromWorld(world);
       window.__world = world;
       drone.colliders = result.colliders;
       drone.colliderIndex = result.colliderIndex;
-      /* Force the BVH to rebuild even if the new map happens to have
-         the same collider count as the old one — otherwise _ensureBVH
-         early-returns and the stale map-A triangles stay in use. */
       if (typeof drone._disposeBVH === 'function') {
         drone._disposeBVH();
       }
-      drone._bvhColliderCount = -1;  /* belt-and-suspenders */
-      /* Re-apply env preset so it overrides the forced background/fog
-         set above — the preset is the source of truth for sky+lighting. */
+      drone._bvhColliderCount = -1;
       applyEnv(settings.env || 'DAY');
 
-      /* re-evaluate DPR based on merged mesh count */
       if (result.meshCount > 2000) setDPRCap(1.0);
       else if (result.meshCount > 800) setDPRCap(1.25);
       else setDPRCap(QUALITY[qualityName].dpr);
 
       drone.reset(0, 0);
-if (window.GhostTrail) GhostTrail.clear();
+      if (window.GhostTrail) GhostTrail.clear();
       flightTime = 0;
       crashShown = false;
-      HUD.showCrash(false);
+      if (window.HUD) HUD.showCrash(false);
       updateArmButton();
 
-      const label = (file.name || 'MAP').replace(/\.[^.]+$/, '').slice(0, 10);
-      btnMap.textContent = 'MAP: ' + label;
-      btnMap.classList.add('on');
+      const label = (file.name || 'MAP').replace(/\.[^.]+$/, '').slice(0, 12);
+      if (btnMap) { btnMap.textContent = 'MAP: ' + label; btnMap.classList.add('on'); }
+      if (btnUnloadMap) { btnUnloadMap.classList.add('on'); btnUnloadMap.textContent = 'UNLOAD CUSTOM MAP'; }
 
       if (saveToIDB) {
-        idbSave(file).then(ok => {
-          if (ok) {
-            btnForget.style.display = '';
-            btnResume.style.display = 'none';
-          }
-        }).catch(err => {
-          console.warn('IDB save rejected (silent):', err && err.message || err);
-        });
-      } else {
-        btnForget.style.display = '';
+        const id = uid();
+        currentCustomMapId = id;
+        try {
+          idbPutMapEntry({
+            id: id,
+            name: file.name || 'map.glb',
+            size: file.size || 0,
+            savedAt: Date.now(),
+            data: file
+          }).then(function() { refreshMapBrowser(); }).catch(function(err) {
+            console.warn('Map save failed:', err && err.message);
+          });
+        } catch(err) {
+          console.warn('Map save failed:', err && err.message);
+        }
       }
+      refreshMapBrowser();
 
       var _sp = document.getElementById('settings-panel');
       if (_sp) _sp.classList.add('hidden');
@@ -823,29 +1043,32 @@ if (window.GhostTrail) GhostTrail.clear();
                   result.colliders.length + ' colliders');
     }).catch(err => {
       console.error('Map load failed:', err);
-      btnMap.textContent = 'LOAD FAILED';
-      setTimeout(() => {
-        btnMap.textContent = 'LOAD MAP';
-        btnMap.classList.remove('on');
-      }, 2500);
+      if (btnMap) {
+        btnMap.textContent = 'LOAD FAILED';
+        setTimeout(() => {
+          btnMap.textContent = 'IMPORT MAP (.GLB/.GLTF)';
+          btnMap.classList.remove('on');
+        }, 2500);
+      }
     });
   }
 
-  btnMap.addEventListener('click', () => mapInput.click());
-  mapInput.addEventListener('change', ev => {
-    const file = ev.target.files && ev.target.files[0];
-    if (file) loadMapFromFile(file, true);
-    mapInput.value = '';
-  });
-
-  btnForget.addEventListener('click', () => {
-    idbForget().then(() => {
-      btnForget.style.display = 'none';
-      btnResume.style.display = 'none';
-    }).catch(err => {
-      console.warn('IDB forget failed (silent):', err && err.message || err);
+  if (btnMap) {
+    btnMap.addEventListener('click', () => mapInput.click());
+  }
+  if (mapInput) {
+    mapInput.addEventListener('change', ev => {
+      const file = ev.target.files && ev.target.files[0];
+      if (file) loadMapFromFile(file, true);
+      mapInput.value = '';
     });
-  });
+  }
+
+  if (btnUnloadMap) {
+    btnUnloadMap.addEventListener('click', unloadCustomMap);
+  }
+
+  refreshMapBrowser();
 
   Input.onArmToggle = toggleArm;
   Input.onReset = respawn;
@@ -1300,6 +1523,14 @@ if (window.GhostTrail) GhostTrail.clear();
     btnGfx.addEventListener('click', function () {
       settings.quality = qualityName;
       saveSettings();
+    });
+  }
+
+  /* refresh map browser when settings panel opens */
+  var btnSettings2 = document.getElementById('btn-settings');
+  if (btnSettings2) {
+    btnSettings2.addEventListener('click', function () {
+      refreshMapBrowser();
     });
   }
 
