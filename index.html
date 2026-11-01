@@ -352,9 +352,20 @@
       <button id="rp-preview" class="sp-opt wide" disabled>PREVIEW</button>
       <button id="rp-export"  class="sp-opt wide" disabled>EXPORT</button>
       <button id="rp-import"  class="sp-opt wide">IMPORT</button>
-      <button id="rp-clear"   class="sp-opt wide">CLEAR</button>
+      <button id="rp-clear"   class="sp-opt wide">CLEAR CURRENT</button>
     </div>
-    <div class="rp-hint">RECORD a flight, then PREVIEW it. The camera follows the recorded drone. Export saves a .json file you can import later.</div>
+
+    <div class="rp-library">
+      <div class="rp-library-head">
+        <span>SAVED REPLAYS</span>
+        <span id="rp-library-count" class="rp-count"></span>
+      </div>
+      <div id="rp-list" class="rp-list">
+        <div class="rp-empty">No saved replays yet.</div>
+      </div>
+    </div>
+
+    <div class="rp-hint">RECORD a flight, then PREVIEW it. The camera follows the recorded drone. Finished recordings are saved locally; export saves a .json file you can import later.</div>
     <input id="rp-file" type="file" accept=".json,application/json" style="display:none" />
   </div>
 </div>
@@ -380,6 +391,7 @@
 <script src="js/mp.js"></script>
 <script src="js/parts.js"></script>
 <script src="js/drills.js"></script>
+<script src="js/replay-store.js"></script>
 <script src="js/replay.js"></script>
 <script src="js/main.js"></script>
 

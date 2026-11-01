@@ -32,7 +32,14 @@ window.Replay = (function () {
     var loadout = null;
     var fpvMode = false;
     var onChange = null;
+    var onLibraryChanged = null;
     var _lastNotify = 0;
+
+    /* Identity of the recording currently loaded in memory. */
+    var currentId = null;
+    var currentName = null;
+    var currentCreatedAt = 0;
+    var currentSaved = false;
 
     /* Reusable playback pose / stick values. */
     var _pos = new THREE.Vector3();
@@ -46,6 +53,10 @@ window.Replay = (function () {
     function init(sc) { scene = sc; }
 
     function setOnChange(fn) { onChange = fn; }
+    function setLibraryChanged(fn) { onLibraryChanged = fn; }
+    function libraryChanged() {
+        if (onLibraryChanged) onLibraryChanged();
+    }
     function setLoadout(l) {
         loadout = l;
         if (visual && visual.setLoadout) visual.setLoadout(l);
@@ -70,7 +81,10 @@ window.Replay = (function () {
             hasData: frames.length >= 2,
             frames: frames.length,
             duration: duration(),
-            time: previewing ? playTime : 0
+            time: previewing ? playTime : 0,
+            id: currentId,
+            name: currentName,
+            saved: currentSaved
         };
     }
 
@@ -114,6 +128,10 @@ window.Replay = (function () {
         if (recording) return false;
         if (previewing) stopPreview();
         frames = [];
+        currentId = null;
+        currentName = null;
+        currentCreatedAt = 0;
+        currentSaved = false;
         recording = true;
         recAcc = 0;
         recT = 0;
@@ -126,6 +144,8 @@ window.Replay = (function () {
         recording = false;
         recAcc = 0;
         notify();
+        /* Every finished recording goes into the local library. */
+        if (frames.length >= 2 && !currentSaved) saveCurrent();
         return true;
     }
 
@@ -149,9 +169,7 @@ window.Replay = (function () {
         capture(drone, state, recT);
 
         if (frames.length >= MAX_FRAMES) {
-            recording = false;
-            recAcc = 0;
-            notify();
+            stopRecording();
             return;
         }
 
@@ -295,6 +313,10 @@ window.Replay = (function () {
         stopAll();
         frames = [];
         _pose = null;
+        currentId = null;
+        currentName = null;
+        currentCreatedAt = 0;
+        currentSaved = false;
         notify();
     }
 
@@ -353,32 +375,17 @@ window.Replay = (function () {
         stopAll();
         frames = out;
         _pose = null;
+        currentId = null;
+        currentName = null;
+        currentCreatedAt = 0;
+        currentSaved = false;
         notify();
     }
 
-    function importFile(file) {
-        return new Promise(function (resolve, reject) {
-            if (!file) { reject(new Error('No file selected')); return; }
-            var reader = new FileReader();
-            reader.onload = function () {
-                try {
-                    var data = JSON.parse(reader.result);
-                    var list = Array.isArray(data) ? data : (data && data.frames);
-                    loadFrames(list);
-                    resolve(getState());
-                } catch (err) {
-                    reject(err);
-                }
-            };
-            reader.onerror = function () { reject(new Error('Could not read file')); };
-            reader.readAsText(file);
-        });
-    }
+    function buildExportData() {
+        if (frames.length < 2) return null;
 
-    function exportFile() {
-        if (frames.length < 2) return false;
-
-        var data = {
+        return {
             format: 'fpv-sim-replay',
             version: 1,
             hz: REC_HZ,
@@ -406,15 +413,37 @@ window.Replay = (function () {
                 };
             })
         };
+    }
+
+    function defaultName() {
+        var d = new Date();
+        function p(n) { return (n < 10 ? '0' : '') + n; }
+        return 'Replay ' + d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' +
+            p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    function safeFileName(name) {
+        var clean = String(name || '')
+            .replace(/[^\w.\- ]+/g, '_')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return clean.slice(0, 80);
+    }
+
+    function downloadData(data, fileName) {
+        if (!data) return false;
 
         var stamp = new Date().toISOString()
             .replace(/[-:]/g, '')
             .replace(/\..+$/, '');
+        var name = safeFileName(fileName) || ('fpv-replay-' + stamp);
+        if (!/\.json$/i.test(name)) name += '.json';
+
         var blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
         var url = URL.createObjectURL(blob);
         var a = document.createElement('a');
         a.href = url;
-        a.download = 'fpv-replay-' + stamp + '.json';
+        a.download = name;
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
@@ -425,6 +454,142 @@ window.Replay = (function () {
         return true;
     }
 
+    function exportFile() {
+        return downloadData(buildExportData(), currentName || defaultName());
+    }
+
+    /* ------------------------------------------------------------------
+       Local library (IndexedDB via ReplayStore)
+       ------------------------------------------------------------------ */
+
+    function saveCurrent() {
+        if (frames.length < 2) return Promise.resolve(null);
+        if (!window.ReplayStore) return Promise.resolve(null);
+
+        var data = buildExportData();
+        if (!data) return Promise.resolve(null);
+
+        return window.ReplayStore.put({
+            id: currentId || undefined,
+            name: currentName || defaultName(),
+            createdAt: currentCreatedAt || Date.now(),
+            duration: data.duration,
+            frameCount: data.frames.length,
+            hz: REC_HZ,
+            data: data
+        }).then(function (meta) {
+            if (!meta) return null;
+            currentId = meta.id;
+            currentName = meta.name;
+            currentCreatedAt = meta.createdAt;
+            currentSaved = true;
+            notify();
+            libraryChanged();
+            return meta;
+        }).catch(function (err) {
+            console.warn('Replay save failed:', err && err.message || err);
+            return null;
+        });
+    }
+
+    function listLibrary() {
+        if (!window.ReplayStore) return Promise.resolve([]);
+        return window.ReplayStore.list().catch(function (err) {
+            console.warn('Replay list failed:', err && err.message || err);
+            return [];
+        });
+    }
+
+    function loadFromLibrary(id) {
+        return Promise.resolve().then(function () {
+            if (!window.ReplayStore) throw new Error('Replay library unavailable');
+            return window.ReplayStore.get(id);
+        }).then(function (rec) {
+            if (!rec || !rec.data) throw new Error('Replay not found');
+            loadFrames(rec.data.frames);
+            currentId = rec.id;
+            currentName = rec.name;
+            currentCreatedAt = rec.createdAt || 0;
+            currentSaved = true;
+            notify();
+            return getState();
+        });
+    }
+
+    function renameInLibrary(id, name) {
+        if (!window.ReplayStore) return Promise.resolve(null);
+        return window.ReplayStore.rename(id, name).then(function (meta) {
+            if (!meta) return null;
+            if (id === currentId) {
+                currentName = meta.name;
+                notify();
+            }
+            libraryChanged();
+            return meta;
+        });
+    }
+
+    function deleteFromLibrary(id) {
+        if (!window.ReplayStore) return Promise.resolve(false);
+        return window.ReplayStore.remove(id).then(function (ok) {
+            if (id === currentId) {
+                stopAll();
+                frames = [];
+                _pose = null;
+                currentId = null;
+                currentName = null;
+                currentCreatedAt = 0;
+                currentSaved = false;
+                notify();
+            }
+            libraryChanged();
+            return ok;
+        });
+    }
+
+    function exportFromLibrary(id) {
+        return Promise.resolve().then(function () {
+            if (!window.ReplayStore) throw new Error('Replay library unavailable');
+            return window.ReplayStore.get(id);
+        }).then(function (rec) {
+            if (!rec || !rec.data) throw new Error('Replay not found');
+            return downloadData(rec.data, rec.name);
+        });
+    }
+
+    function getCurrentId() { return currentId; }
+
+    function nameFromFile(file) {
+        var n = String(file && file.name || '').replace(/\.[^.]+$/, '').trim();
+        return n ? n.slice(0, 80) : 'Imported replay';
+    }
+
+    function importFile(file) {
+        return new Promise(function (resolve, reject) {
+            if (!file) { reject(new Error('No file selected')); return; }
+            var reader = new FileReader();
+            reader.onload = function () {
+                try {
+                    var data = JSON.parse(reader.result);
+                    var list = Array.isArray(data) ? data : (data && data.frames);
+                    loadFrames(list);
+                    currentId = null;
+                    currentName = nameFromFile(file);
+                    currentCreatedAt = 0;
+                    currentSaved = false;
+                    /* Imported replays land in the local library too. */
+                    saveCurrent().then(function () {
+                        resolve(getState());
+                    });
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = function () { reject(new Error('Could not read file')); };
+            reader.readAsText(file);
+        });
+    }
+
     /* Backwards-compatible names used by older main.js paths. */
     function start() { return startPreview(); }
     function stop() { return stopPreview(); }
@@ -432,8 +597,10 @@ window.Replay = (function () {
     return {
         init: init,
         setOnChange: setOnChange,
+        setLibraryChanged: setLibraryChanged,
         setLoadout: setLoadout,
         setFPVMode: setFPVMode,
+        setVisible: setVisible,
 
         startRecording: startRecording,
         stopRecording: stopRecording,
@@ -450,6 +617,15 @@ window.Replay = (function () {
         importFile: importFile,
         getState: getState,
         getDuration: duration,
+
+        buildExportData: buildExportData,
+        saveCurrent: saveCurrent,
+        listLibrary: listLibrary,
+        loadFromLibrary: loadFromLibrary,
+        renameInLibrary: renameInLibrary,
+        deleteFromLibrary: deleteFromLibrary,
+        exportFromLibrary: exportFromLibrary,
+        getCurrentId: getCurrentId,
 
         isRecording: isRecording,
         isPreviewing: isPreviewing,

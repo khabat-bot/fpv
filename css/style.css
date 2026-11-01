@@ -1597,3 +1597,91 @@ text-align: center;
 
 /* Previewing a recording freezes the live controls. */
 .replay-preview .stick { display: none; }
+
+/* ============================================================
+Replay local library (appended — additive)
+============================================================ */
+.rp-library {
+margin-top: 16px;
+padding-top: 12px;
+border-top: 1px solid rgba(120, 180, 255, 0.18);
+}
+.rp-library-head {
+display: flex;
+justify-content: space-between;
+align-items: center;
+font-size: 10px;
+letter-spacing: 0.16em;
+color: var(--osd-dim);
+margin-bottom: 8px;
+}
+.rp-count {
+font-variant-numeric: tabular-nums;
+letter-spacing: 0.08em;
+}
+.rp-list {
+display: flex;
+flex-direction: column;
+gap: 6px;
+max-height: 230px;
+overflow-y: auto;
+-webkit-overflow-scrolling: touch;
+overscroll-behavior: contain;
+}
+.rp-empty {
+padding: 14px 8px;
+text-align: center;
+font-size: 10px;
+letter-spacing: 0.08em;
+color: var(--osd-dim);
+background: rgba(120, 180, 255, 0.04);
+border: 1px dashed rgba(120, 180, 255, 0.18);
+border-radius: 8px;
+}
+.rp-item {
+display: flex;
+flex-direction: column;
+gap: 6px;
+padding: 8px 10px;
+background: rgba(120, 180, 255, 0.07);
+border: 1px solid rgba(120, 180, 255, 0.18);
+border-radius: 8px;
+}
+.rp-item.active {
+border-color: rgba(110, 242, 160, 0.55);
+background: rgba(30, 140, 80, 0.16);
+}
+.rp-item-name {
+font-size: 11px;
+font-weight: bold;
+letter-spacing: 0.06em;
+color: var(--osd);
+word-break: break-word;
+}
+.rp-item-meta {
+font-size: 9px;
+letter-spacing: 0.08em;
+color: var(--osd-dim);
+font-variant-numeric: tabular-nums;
+}
+.rp-item-acts {
+display: flex;
+gap: 5px;
+}
+.rp-act {
+flex: 1 1 0;
+font-family: inherit;
+font-size: 9px;
+letter-spacing: 0.08em;
+padding: 6px 4px;
+color: var(--osd);
+background: rgba(120, 180, 255, 0.10);
+border: 1px solid rgba(120, 180, 255, 0.25);
+border-radius: 6px;
+cursor: pointer;
+touch-action: manipulation;
+-webkit-tap-highlight-color: transparent;
+}
+.rp-act:active { background: rgba(120, 180, 255, 0.24); }
+.rp-act.play { color: #b6ffd0; border-color: rgba(110, 242, 160, 0.35); }
+.rp-act.del  { color: #ffb0b0; border-color: rgba(255, 120, 120, 0.35); }

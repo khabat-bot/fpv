@@ -338,12 +338,89 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   var rpClear = document.getElementById('rp-clear');
   var rpClose = document.getElementById('rp-close');
   var rpFile = document.getElementById('rp-file');
+  var rpList = document.getElementById('rp-list');
+  var rpLibraryCount = document.getElementById('rp-library-count');
+  var replayLibrarySeq = 0;
 
   function fmtReplayTime(sec) {
     sec = Math.max(0, sec || 0);
     var m = Math.floor(sec / 60);
     var s = sec - m * 60;
     return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
+  }
+
+  function fmtReplayDate(ts) {
+    if (!ts) return '';
+    var d = new Date(ts);
+    function p(n) { return (n < 10 ? '0' : '') + n; }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+      ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }
+
+  function rpActionButton(label, act, extraClass) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'rp-act' + (extraClass ? ' ' + extraClass : '');
+    b.setAttribute('data-act', act);
+    b.textContent = label;
+    return b;
+  }
+
+  /* Rendering the library hits IndexedDB, so it is only called when the
+     panel opens or the library actually changes — never from the
+     200 ms recording/preview repaint. */
+  function refreshReplayLibrary() {
+    if (!rpList || !window.Replay || !Replay.listLibrary) return;
+    var seq = ++replayLibrarySeq;
+    Replay.listLibrary().then(function (items) {
+      if (seq !== replayLibrarySeq || !rpList) return;
+      items = items || [];
+      if (rpLibraryCount) {
+        rpLibraryCount.textContent = items.length ? String(items.length) : '';
+      }
+      rpList.textContent = '';
+
+      if (!items.length) {
+        var empty = document.createElement('div');
+        empty.className = 'rp-empty';
+        empty.textContent = 'No saved replays yet.';
+        rpList.appendChild(empty);
+        return;
+      }
+
+      var currentId = (Replay.getState && Replay.getState().id) || null;
+      items.forEach(function (rec) {
+        var item = document.createElement('div');
+        item.className = 'rp-item' + (rec.id === currentId ? ' active' : '');
+        item.setAttribute('data-id', rec.id);
+
+        var name = document.createElement('div');
+        name.className = 'rp-item-name';
+        name.textContent = rec.name || 'Untitled';
+        name.title = rec.name || '';
+
+        var meta = document.createElement('div');
+        meta.className = 'rp-item-meta';
+        var bits = [fmtReplayTime(rec.duration)];
+        if (rec.frameCount) bits.push(rec.frameCount + ' frames');
+        if (rec.createdAt) bits.push(fmtReplayDate(rec.createdAt));
+        meta.textContent = bits.join('  \u00b7  ');
+
+        var acts = document.createElement('div');
+        acts.className = 'rp-item-acts';
+        acts.appendChild(rpActionButton('PLAY', 'play', 'play'));
+        acts.appendChild(rpActionButton('RENAME', 'rename'));
+        acts.appendChild(rpActionButton('EXPORT', 'export'));
+        acts.appendChild(rpActionButton('DELETE', 'delete', 'del'));
+
+        item.appendChild(name);
+        item.appendChild(meta);
+        item.appendChild(acts);
+        rpList.appendChild(item);
+      });
+    }).catch(function (err) {
+      console.warn('Replay library refresh failed:', err);
+    });
   }
 
   function refreshReplayUI() {
@@ -363,6 +440,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     } else {
       rpStatus.textContent = 'NO RECORDING';
     }
+    rpStatus.title = st.name || '';
 
     if (rpRecord) {
       rpRecord.textContent = st.recording ? 'STOP RECORDING' : 'RECORD';
@@ -387,6 +465,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     if (!replayPanel) return;
     replayPanel.classList.remove('hidden');
     refreshReplayUI();
+    refreshReplayLibrary();
   }
   function closeReplayPanel() {
     if (replayPanel) replayPanel.classList.add('hidden');
@@ -394,6 +473,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
 
   if (window.Replay) {
     Replay.setOnChange(refreshReplayUI);
+    if (Replay.setLibraryChanged) Replay.setLibraryChanged(refreshReplayLibrary);
   }
 
   if (btnReplay) {
@@ -455,6 +535,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (!file || !window.Replay) return;
       Replay.importFile(file).then(function () {
         refreshReplayUI();
+        refreshReplayLibrary();
         rpStatus.textContent = 'IMPORTED \u00b7 ' + fmtReplayTime(Replay.getDuration());
       }).catch(function (err) {
         console.error('Replay import failed:', err);
@@ -467,6 +548,65 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     rpClear.addEventListener('click', function () {
       if (window.Replay) Replay.clear();
       refreshReplayUI();
+      refreshReplayLibrary();
+    });
+  }
+
+  /* Local library — one delegated handler for every row action. */
+  if (rpList) {
+    rpList.addEventListener('click', function (ev) {
+      var btn = ev.target && ev.target.closest ? ev.target.closest('.rp-act') : null;
+      if (!btn) return;
+      var item = btn.closest ? btn.closest('.rp-item') : null;
+      if (!item || !window.Replay) return;
+      var id = item.getAttribute('data-id');
+      var act = btn.getAttribute('data-act');
+      if (!id) return;
+
+      if (act === 'play') {
+        Replay.loadFromLibrary(id).then(function () {
+          Replay.startPreview();
+          closeReplayPanel();
+          refreshReplayUI();
+        }).catch(function (err) {
+          console.error('Replay load failed:', err);
+          rpStatus.textContent = 'LOAD FAILED';
+        });
+        return;
+      }
+
+      if (act === 'rename') {
+        var nameEl = item.querySelector('.rp-item-name');
+        var current = nameEl ? nameEl.textContent : '';
+        var next = window.prompt('Rename replay', current);
+        if (next == null) return;
+        next = String(next).trim();
+        if (!next || next === current) return;
+        Replay.renameInLibrary(id, next).then(function () {
+          refreshReplayUI();
+        }).catch(function (err) {
+          console.error('Replay rename failed:', err);
+        });
+        return;
+      }
+
+      if (act === 'export') {
+        Replay.exportFromLibrary(id).catch(function (err) {
+          console.error('Replay export failed:', err);
+        });
+        return;
+      }
+
+      if (act === 'delete') {
+        var nEl = item.querySelector('.rp-item-name');
+        var label = nEl ? nEl.textContent : 'this replay';
+        if (!window.confirm('Delete "' + label + '" from local replays?')) return;
+        Replay.deleteFromLibrary(id).then(function () {
+          refreshReplayUI();
+        }).catch(function (err) {
+          console.error('Replay delete failed:', err);
+        });
+      }
     });
   }
 
