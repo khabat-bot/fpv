@@ -1557,20 +1557,85 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       var el = document.getElementById('mp-status');
       if (el) el.textContent = txt || '';
     }
-    function renderPlayers(others) {
+
+    /* --- live multiplayer HUD + transient notices --- */
+    var mpHud = document.getElementById('mp-hud');
+    var mpHudCount = document.getElementById('mp-hud-count');
+    var mpHudPing = document.getElementById('mp-hud-ping');
+    var toastRoot = document.getElementById('mp-toasts');
+
+    function showToast(text, kind) {
+      if (!toastRoot || !text) return;
+      var el = document.createElement('div');
+      el.className = 'mp-toast' + (kind ? ' ' + kind : '');
+      el.textContent = text;
+      toastRoot.appendChild(el);
+      while (toastRoot.children.length > 4) toastRoot.removeChild(toastRoot.firstChild);
+      setTimeout(function () { el.classList.add('out'); }, 2400);
+      setTimeout(function () {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      }, 2850);
+    }
+
+    function updateMpHud() {
+      if (!mpHud) return;
+      var on = !!(window.Net && Net.isConnected());
+      mpHud.classList.toggle('hidden', !on);
+      if (!on) return;
+
+      var count = (window.Net && Net.getPlayerCount) ? Net.getPlayerCount() : 1;
+      if (count < 1) count = 1;
+      if (mpHudCount) {
+        mpHudCount.textContent = count + (count === 1 ? ' PILOT' : ' PILOTS');
+      }
+      var rtt = (window.Net && Net.getLatency) ? Net.getLatency() : 0;
+      if (mpHudPing) {
+        mpHudPing.textContent = rtt > 0 ? Math.max(1, Math.round(rtt)) + 'ms' : '—';
+        mpHudPing.className = 'mp-hud-ping' +
+          (rtt > 0 ? (rtt > 140 ? ' bad' : (rtt > 70 ? ' warn' : ' good')) : '');
+      }
+    }
+    setInterval(updateMpHud, 500);
+
+    /* --- lobby roster model --- */
+    var peerInfo = {};
+    var currentHostPid = null;
+
+    function playerRow(name, pid, isMe) {
+      var row = document.createElement('div');
+      row.className = 'mp-player' + (isMe ? ' me' : '') +
+        (pid && pid === currentHostPid ? ' host' : '');
+      row.id = 'mp-peer-' + (pid || 'self');
+
+      var label = document.createElement('span');
+      label.className = 'mp-player-name';
+      label.textContent = name || pid || 'Pilot';
+      row.appendChild(label);
+
+      if (pid && pid === currentHostPid) {
+        var host = document.createElement('span');
+        host.className = 'mp-player-tag';
+        host.textContent = 'HOST';
+        row.appendChild(host);
+      }
+      if (isMe) {
+        var you = document.createElement('span');
+        you.className = 'mp-player-you';
+        you.textContent = 'YOU';
+        row.appendChild(you);
+      }
+      return row;
+    }
+
+    function renderPlayers() {
       var list = document.getElementById('mp-players');
       if (!list) return;
       list.textContent = '';
-      var me = document.createElement('div');
-      me.className = 'mp-player me';
-      me.textContent = myNickname + ' (you)';
-      list.appendChild(me);
-      (others || []).forEach(function (o) {
-        var d = document.createElement('div');
-        d.className = 'mp-player';
-        d.id = 'mp-peer-' + o.pid;
-        d.textContent = o.nickname || o.pid;
-        list.appendChild(d);
+      var myPid = (window.Net && Net.getMyPid) ? Net.getMyPid() : null;
+      list.appendChild(playerRow(myNickname, myPid, true));
+      Object.keys(peerInfo).forEach(function (pid) {
+        var o = peerInfo[pid] || {};
+        list.appendChild(playerRow(o.nickname || pid, pid, false));
       });
     }
 
@@ -1638,7 +1703,8 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         var meta = document.createElement('div');
         meta.className = 'mp-server-meta';
         meta.textContent = (room.host || 'Pilot') + ' · ' +
-          room.players + '/' + room.max + ' · ' + room.room;
+          room.players + '/' + room.max + ' · ' + room.room +
+          (room.map ? ' · MAP' : '');
 
         info.appendChild(name);
         info.appendChild(meta);
@@ -1667,6 +1733,38 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       });
     }
 
+    function copyText(text, okMessage) {
+      function fallback() {
+        try {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          document.body.removeChild(ta);
+          setStatus(okMessage);
+        } catch (e) {
+          setStatus('copy failed');
+        }
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () {
+          setStatus(okMessage);
+        }).catch(fallback);
+      } else {
+        fallback();
+      }
+    }
+
+    function inviteUrl() {
+      var room = (window.Net && Net.getRoom) ? Net.getRoom() : '';
+      if (!room) return '';
+      return location.href.split('#')[0].split('?')[0] + '?room=' + room;
+    }
+
     function joinRoom(code) {
       if (!window.Net) { setStatus('multiplayer unavailable'); return; }
       code = (code || '').trim().toUpperCase();
@@ -1690,7 +1788,16 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       }
     }, 5000);
 
-    var isHost = false;
+    function amHost() {
+      var myPid = (window.Net && Net.getMyPid) ? Net.getMyPid() : null;
+      return !!(myPid && currentHostPid && myPid === currentHostPid);
+    }
+
+    function refreshHostUi() {
+      var row = document.getElementById('mp-share-map-row');
+      if (row) row.style.display = amHost() ? '' : 'none';
+      renderPlayers();
+    }
 
     function loadMapFromUrl(url) {
       setStatus('Downloading map...');
@@ -1719,9 +1826,39 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (e.target === mpPanel) mpPanel.classList.add('hidden');
     });
 
+    /* Invite links: ?room=ABC123 pre-fills the join code and opens the
+       lobby panel without silently joining (the pilot still presses JOIN). */
+    (function handleInviteLink() {
+      var invite = '';
+      try {
+        invite = (new URLSearchParams(location.search).get('room') || '').trim().toUpperCase();
+      } catch (e) { /* old browser */ }
+      if (!/^[A-Z0-9]{1,12}$/.test(invite)) return;
+      var codeInput = document.getElementById('mp-code-input');
+      if (codeInput) codeInput.value = invite;
+      mpPanel.classList.remove('hidden');
+      showConnect();
+      refreshServers();
+      setStatus('Invite code ' + invite + ' loaded — press JOIN');
+    })();
+
     function handleRoom(msg) {
-      isHost = (msg.t === 'created');
-      document.getElementById('mp-share-map-row').style.display = isHost ? '' : 'none';
+      currentHostPid = msg.host || ((window.Net && Net.getMyPid) ? Net.getMyPid() : null);
+
+      // Rebuild the roster and remote visuals from the authoritative
+      // snapshot. This also cleans up peers that left while we were
+      // disconnected and reconnected.
+      peerInfo = {};
+      (msg.others || []).forEach(function (o) {
+        if (o && o.pid) peerInfo[o.pid] = { nickname: o.nickname };
+      });
+      if (window.MP) {
+        MP.clearAll();
+        (msg.others || []).forEach(function (o) {
+          MP.spawnRemote(o.pid, o.loadout, o.nickname);
+        });
+      }
+
       document.getElementById('mp-room-code').textContent = msg.room;
       var titleEl = document.getElementById('mp-lobby-title');
       if (titleEl) titleEl.textContent = msg.name || 'Lobby';
@@ -1730,17 +1867,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         badge.textContent = msg.public ? 'PUBLIC' : 'PRIVATE';
         badge.className = 'mp-badge ' + (msg.public ? 'public' : 'private');
       }
-      renderPlayers(msg.others || []);
-      if (msg.others) {
-        msg.others.forEach(function (o) {
-          if (window.MP) MP.spawnRemote(o.pid, o.loadout, o.nickname);
-        });
-      }
+      refreshHostUi();
       showInRoom();
       setStatus('');
       if (msg.map_url) loadMapFromUrl(msg.map_url);
       var b = document.getElementById('net-badge');
       if (b) b.classList.add('hidden');
+      updateMpHud();
     }
 
     /* CREATE LOBBY */
@@ -1769,11 +1902,33 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     document.getElementById('mp-leave').addEventListener('click', function () {
       if (window.Net) Net.leave();
       if (window.MP) MP.clearAll();
-      isHost = false;
+      peerInfo = {};
+      currentHostPid = null;
+      var shareRow = document.getElementById('mp-share-map-row');
+      if (shareRow) shareRow.style.display = 'none';
       showConnect();
       refreshServers();
       setStatus('left room');
+      var b = document.getElementById('net-badge');
+      if (b) b.classList.add('hidden');
+      updateMpHud();
     });
+
+    /* COPY ROOM CODE / INVITE LINK */
+    var copyCodeBtn = document.getElementById('mp-copy-code');
+    if (copyCodeBtn) {
+      copyCodeBtn.addEventListener('click', function () {
+        var room = (window.Net && Net.getRoom) ? Net.getRoom() : '';
+        if (room) copyText(room, 'Room code copied');
+      });
+    }
+    var copyInviteBtn = document.getElementById('mp-copy-invite');
+    if (copyInviteBtn) {
+      copyInviteBtn.addEventListener('click', function () {
+        var url = inviteUrl();
+        if (url) copyText(url, 'Invite link copied');
+      });
+    }
 
     /* Net event handlers */
     if (window.Net) {
@@ -1781,40 +1936,75 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       Net.on('joined', handleRoom);
 
       Net.on('peer_join', function (msg) {
+        if (msg.pid) peerInfo[msg.pid] = { nickname: msg.nickname || msg.pid };
         if (window.MP) MP.spawnRemote(msg.pid, msg.loadout, msg.nickname);
-        var list = document.getElementById('mp-players');
-        if (list && !document.getElementById('mp-peer-' + msg.pid)) {
-          var d = document.createElement('div');
-          d.className = 'mp-player';
-          d.id = 'mp-peer-' + msg.pid;
-          d.textContent = msg.nickname || msg.pid;
-          list.appendChild(d);
-        }
+        renderPlayers();
+        showToast((msg.nickname || 'Pilot') + ' joined', 'join');
+        updateMpHud();
       });
+
       Net.on('peer_leave', function (msg) {
+        var info = peerInfo[msg.pid];
+        delete peerInfo[msg.pid];
         if (window.MP) MP.removeRemote(msg.pid);
-        var d = document.getElementById('mp-peer-' + msg.pid);
-        if (d && d.parentNode) d.parentNode.removeChild(d);
+        renderPlayers();
+        showToast((info && info.nickname ? info.nickname : 'Pilot') + ' left', 'leave');
+        updateMpHud();
       });
+
+      Net.on('host_change', function (msg) {
+        currentHostPid = msg.pid;
+        refreshHostUi();
+        var myPid = Net.getMyPid();
+        if (msg.pid && msg.pid === myPid) {
+          showToast('You are now the host', 'host');
+        } else {
+          var info = peerInfo[msg.pid];
+          showToast(((info && info.nickname) || msg.nickname || 'Pilot') + ' is now the host', 'host');
+        }
+        updateMpHud();
+      });
+
       Net.on('state', function (msg) {
         if (window.MP) MP.onState(msg);
       });
+
       Net.on('disconnected', function () {
         setStatus('Connection lost. Reconnecting...');
         var b = document.getElementById('net-badge');
         if (b) { b.className = 'net-badge reconnecting'; b.textContent = 'RECONNECTING...'; b.classList.remove('hidden'); }
+        updateMpHud();
       });
+
+      Net.on('reconnected', function () {
+        var b = document.getElementById('net-badge');
+        if (b) b.classList.add('hidden');
+        setStatus('');
+        showToast('Reconnected', 'good');
+        updateMpHud();
+      });
+
+      Net.on('latency', updateMpHud);
+
+      Net.on('error', function (msg) {
+        if (msg && msg.msg) setStatus(msg.msg);
+      });
+
       Net.on('room_lost', function () {
         if (window.MP) MP.clearAll();
-        isHost = false;
+        peerInfo = {};
+        currentHostPid = null;
+        var shareRow = document.getElementById('mp-share-map-row');
+        if (shareRow) shareRow.style.display = 'none';
         showConnect();
         refreshServers();
         setStatus('Room closed. Disconnected.');
         var b = document.getElementById('net-badge');
         if (b) { b.className = 'net-badge'; b.textContent = 'ROOM LOST'; b.classList.remove('hidden'); }
+        updateMpHud();
       });
 
-      Net.on('map_change', function(msg) {
+      Net.on('map_change', function (msg) {
         if (msg.url) loadMapFromUrl(msg.url);
       });
 
@@ -1824,7 +2014,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
 
       document.getElementById('mp-map-file').addEventListener('change', function (ev) {
         var file = ev.target.files[0];
-        if (!file || !isHost) return;
+        if (!file || !amHost()) return;
         var room = Net.getRoom();
         if (!room) return;
         setStatus('Uploading map...');

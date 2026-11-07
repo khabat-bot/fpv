@@ -33,7 +33,9 @@ Protocol (JSON messages):
         {"t":"error","msg":"..."}
 """
 import asyncio, os, sys, json, hashlib, base64, struct, random, string
+import math, re, time
 import mimetypes
+from urllib.parse import parse_qs
 
 PORT = int(os.environ.get('PORT', 8080))
 HOST = os.environ.get('HOST', '0.0.0.0')
@@ -42,6 +44,20 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 WS_MAGIC = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 MAX_MSG_BYTES = 4096
 MAX_ROOM_SIZE = 8
+MAX_ROOMS = 256
+MAP_DIR = os.environ.get('FPV_MAP_DIR', '/tmp')
+
+# A client that goes away without a close frame is dropped after this long
+# with no frames. Clients ping every 15 s; 90 s tolerates background-tab
+# timer throttling without leaving ghost pilots in the room forever.
+IDLE_TIMEOUT = 90.0
+
+# Guard against state floods from a modified client.
+STATE_RATE_MAX = 60
+STATE_RATE_WINDOW = 1.0
+
+ROOM_CODE_RE = re.compile(r'^[A-Z0-9]{1,12}$')
+MAP_FILE_RE = re.compile(r'^[A-Z0-9]{1,12}$')
 
 # Rooms: { room_id: {'host': pid, 'public': bool, 'name': str,
 #                     'players': {pid: {'ws': writer, 'loadout': obj}}} }
@@ -63,6 +79,70 @@ def clean_text(value, fallback='', limit=32):
     elif not isinstance(value, str):
         value = str(value)
     return value.strip()[:limit] or fallback
+
+
+def clean_vec(value, count, limit=100000.0):
+    """Return a list of `count` finite floats, or None if the input is junk."""
+    if not isinstance(value, (list, tuple)) or len(value) < count:
+        return None
+    out = []
+    for i in range(count):
+        x = value[i]
+        if isinstance(x, bool) or not isinstance(x, (int, float)):
+            return None
+        x = float(x)
+        if not math.isfinite(x):
+            return None
+        out.append(max(-limit, min(limit, x)))
+    return out
+
+
+def map_path(room):
+    return os.path.join(MAP_DIR, 'fpv-map-%s.glb' % room)
+
+
+def delete_map(room):
+    try:
+        os.remove(map_path(room))
+    except OSError:
+        pass
+
+
+async def broadcast_json(room, obj, skip_pid=None):
+    """Send one JSON message to every player in a room."""
+    payload = json.dumps(obj, separators=(',', ':')).encode('utf-8')
+    for pid, p in list(room['players'].items()):
+        if pid == skip_pid:
+            continue
+        try:
+            await ws_send_frame(p['ws'], 1, payload)
+        except Exception:
+            pass
+
+
+async def remove_player(room_id, pid):
+    """Remove a player, close the room if empty, and migrate the host."""
+    room = rooms.get(room_id)
+    if not room or pid not in room['players']:
+        return
+    del room['players'][pid]
+
+    if not room['players']:
+        del rooms[room_id]
+        delete_map(room_id)
+        print('[room] closed %s' % room_id)
+        return
+
+    await broadcast_json(room, {'t': 'peer_leave', 'pid': pid})
+
+    if room.get('host') == pid:
+        new_host = next(iter(room['players']))
+        room['host'] = new_host
+        nickname = room['players'][new_host].get('nickname') or 'Pilot'
+        await broadcast_json(room, {
+            't': 'host_change', 'pid': new_host, 'nickname': nickname
+        })
+        print('[room] host %s -> %s in %s' % (pid, new_host, room_id))
 
 
 # --- WebSocket helpers ---------------------------------------------------
@@ -193,8 +273,9 @@ async def handle_client(reader, writer):
                 'players': len(players),
                 'max': MAX_ROOM_SIZE,
                 'full': len(players) >= MAX_ROOM_SIZE,
+                'map': bool(room.get('map_url')),
             })
-        public_rooms.sort(key=lambda r: (r['name'].lower(), r['room']))
+        public_rooms.sort(key=lambda r: (-r['players'], r['name'].lower(), r['room']))
         body = json.dumps({
             'enabled': True, 'rooms': public_rooms
         }).encode('utf-8')
@@ -227,17 +308,17 @@ async def handle_client(reader, writer):
             chunk = await asyncio.wait_for(reader.read(content_length - len(body)), timeout=30.0)
             if not chunk: break
             body += chunk
-        qs = path.split('?', 1)[1] if '?' in path else ''
-        room = qs.split('=')[1] if 'room=' in qs else None
-        if room and room in rooms:
-            fs_path = f'/tmp/fpv-map-{room}.glb'
+        params = parse_qs(path.split('?', 1)[1] if '?' in path else '')
+        room = (params.get('room') or [''])[0].strip().upper()
+        if ROOM_CODE_RE.match(room) and room in rooms:
+            fs_path = map_path(room)
             with open(fs_path, 'wb') as f:
                 f.write(body)
-            rooms[room]['map_url'] = f'/map/{room}.glb'
-            out = {'t': 'map_change', 'url': rooms[room]['map_url']}
-            for op, p in list(rooms[room]['players'].items()):
-                try: await ws_send_json(p['ws'], out)
-                except Exception: pass
+            version = int(time.time() * 1000)
+            rooms[room]['map_url'] = f'/map/{room}.glb?v={version}'
+            await broadcast_json(rooms[room], {
+                't': 'map_change', 'url': rooms[room]['map_url']
+            })
             writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n')
         else:
             writer.write(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n')
@@ -249,9 +330,11 @@ async def handle_client(reader, writer):
 
     # GET /map/<room>.glb
     if path.startswith('/map/'):
-        room = path.split('/')[-1].replace('.glb', '')
-        fs_path = f'/tmp/fpv-map-{room}.glb'
-        if os.path.exists(fs_path):
+        room = path.split('/')[-1].split('?', 1)[0]
+        if room.endswith('.glb'):
+            room = room[:-4]
+        fs_path = map_path(room) if MAP_FILE_RE.match(room) else None
+        if fs_path and os.path.exists(fs_path):
             with open(fs_path, 'rb') as f:
                 body = f.read()
             writer.write(
@@ -274,7 +357,11 @@ async def handle_client(reader, writer):
     if rel == '':
         rel = 'index.html'
     fs_path = os.path.normpath(os.path.join(ROOT, rel))
-    if not fs_path.startswith(ROOT):
+    try:
+        inside_root = os.path.commonpath([ROOT, fs_path]) == ROOT
+    except ValueError:
+        inside_root = False
+    if not inside_root:
         writer.write(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n')
         try: await writer.drain()
         except Exception: pass
@@ -321,9 +408,11 @@ async def handle_client(reader, writer):
 async def ws_session(reader, writer):
     pid = gen_pid()
     room_id = None
+    state_window_start = time.monotonic()
+    state_count = 0
     try:
         while True:
-            opcode, payload = await ws_read_frame(reader)
+            opcode, payload = await asyncio.wait_for(ws_read_frame(reader), timeout=IDLE_TIMEOUT)
             if opcode == 8:  # close
                 break
             if opcode == 9:  # ping
@@ -337,7 +426,23 @@ async def ws_session(reader, writer):
                 continue
             t = msg.get('t')
 
+            # Application-level heartbeat (distinct from WS control pings,
+            # which browsers cannot send directly).
+            if t == 'ping':
+                await ws_send_json(writer, {
+                    't': 'pong',
+                    'ts': msg.get('ts'),
+                    'time': int(time.time() * 1000)
+                })
+                continue
+
             if t == 'create':
+                if room_id:
+                    await remove_player(room_id, pid)
+                    room_id = None
+                if len(rooms) >= MAX_ROOMS:
+                    await ws_send_json(writer, {'t': 'error', 'msg': 'server full'})
+                    continue
                 code = gen_code()
                 while code in rooms:
                     code = gen_code()
@@ -355,18 +460,21 @@ async def ws_session(reader, writer):
                 room_id = code
                 await ws_send_json(writer, {
                     't': 'created', 'room': code, 'pid': pid, 'nickname': nickname,
-                    'public': public, 'name': name
+                    'public': public, 'name': name, 'host': pid
                 })
                 print('[room] create %s "%s" (%s) by %s' % (code, name, 'public' if public else 'private', pid))
 
             elif t == 'join':
-                code = (msg.get('room') or '').strip().upper()
-                if code not in rooms:
+                code = clean_text(msg.get('room'), '', 12).upper()
+                if not ROOM_CODE_RE.match(code) or code not in rooms:
                     await ws_send_json(writer, {'t': 'error', 'msg': 'room not found'})
                     continue
-                if len(rooms[code]['players']) >= MAX_ROOM_SIZE:
+                if len(rooms[code]['players']) >= MAX_ROOM_SIZE and pid not in rooms[code]['players']:
                     await ws_send_json(writer, {'t': 'error', 'msg': 'room full'})
                     continue
+                if room_id and room_id != code:
+                    await remove_player(room_id, pid)
+                    room_id = None
                 room_id = code
                 nickname = clean_text(msg.get('nickname'), 'Pilot')
                 rooms[code]['players'][pid] = {'ws': writer, 'loadout': msg.get('loadout'), 'nickname': nickname}
@@ -379,7 +487,8 @@ async def ws_session(reader, writer):
                     't': 'joined', 'room': code, 'pid': pid, 'others': others,
                     'map_url': map_url,
                     'public': bool(rooms[code].get('public')),
-                    'name': rooms[code].get('name') or 'Lobby'
+                    'name': rooms[code].get('name') or 'Lobby',
+                    'host': rooms[code].get('host')
                 })
                 for op, p in list(rooms[code]['players'].items()):
                     if op == pid:
@@ -393,17 +502,37 @@ async def ws_session(reader, writer):
                 print('[room] join %s by %s (%d players)' % (code, pid, len(rooms[code]['players'])))
 
             elif t == 'state' and room_id and room_id in rooms:
+                now = time.monotonic()
+                if now - state_window_start > STATE_RATE_WINDOW:
+                    state_window_start = now
+                    state_count = 0
+                state_count += 1
+                if state_count > STATE_RATE_MAX:
+                    continue
+
+                p = clean_vec(msg.get('p'), 3, 10000.0)
+                q = clean_vec(msg.get('q'), 4, 1.0)
+                v = clean_vec(msg.get('v'), 3, 1000.0)
+                if p is None or q is None:
+                    continue
+
                 out = {
                     't': 'state', 'pid': pid,
-                    'p': msg.get('p'), 'q': msg.get('q'), 'v': msg.get('v'),
+                    'p': p, 'q': q, 'v': v or [0.0, 0.0, 0.0],
                     'armed': bool(msg.get('armed')),
                     'crashed': bool(msg.get('crashed'))
                 }
+                n = msg.get('n')
+                if isinstance(n, int) and not isinstance(n, bool) and 0 <= n < 2 ** 31:
+                    out['n'] = n
+
+                # Serialize once, then fan the same bytes out to each peer.
+                frame = json.dumps(out, separators=(',', ':')).encode('utf-8')
                 for op, p in list(rooms[room_id]['players'].items()):
                     if op == pid:
                         continue
                     try:
-                        await ws_send_json(p['ws'], out)
+                        await ws_send_frame(p['ws'], 1, frame)
                     except Exception:
                         pass
 
@@ -416,16 +545,10 @@ async def ws_session(reader, writer):
         print('[ws error]', repr(e))
     finally:
         if room_id and room_id in rooms:
-            rooms[room_id]['players'].pop(pid, None)
-            if not rooms[room_id]['players']:
-                del rooms[room_id]
-                print('[room] closed %s' % room_id)
-            else:
-                for op, p in list(rooms[room_id]['players'].items()):
-                    try:
-                        await ws_send_json(p['ws'], {'t': 'peer_leave', 'pid': pid})
-                    except Exception:
-                        pass
+            try:
+                await remove_player(room_id, pid)
+            except Exception as e:
+                print('[ws cleanup error]', repr(e))
         try:
             writer.close()
         except Exception:

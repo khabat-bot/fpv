@@ -360,6 +360,10 @@
       <div class="mp-row">
         <span class="mp-lbl">Room</span>
         <span id="mp-room-code" class="mp-code">------</span>
+        <button id="mp-copy-code" class="mp-btn small">COPY</button>
+      </div>
+      <div class="mp-row">
+        <button id="mp-copy-invite" class="mp-btn wide">COPY INVITE LINK</button>
       </div>
       <div class="mp-row">
         <span class="mp-lbl">Access</span>
@@ -439,6 +443,12 @@
 <script src="js/replay.js"></script>
 <script src="js/main.js"></script>
 
+<div id="mp-hud" class="mp-hud hidden">
+  <span class="mp-hud-dot"></span>
+  <span id="mp-hud-count">1 PILOT</span>
+  <span id="mp-hud-ping" class="mp-hud-ping">—</span>
+</div>
+<div id="mp-toasts" class="mp-toasts"></div>
 <div id="net-badge" class="net-badge hidden"></div>
 </body>
 </html>
