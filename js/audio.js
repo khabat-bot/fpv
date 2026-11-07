@@ -3,7 +3,7 @@
    ========================================================================= */
 'use strict';
 
-window.Audio = (function () {
+window.SimAudio = (function () {
 
   let ctx = null;
   let master = null;

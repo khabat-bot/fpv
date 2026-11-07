@@ -1,0 +1,1 @@
+FIXED: two errors sometimes happen when first opening the page 1. TypeError: Audio.update is not a function. (In 'Audio.update(viewDrone, hudStick, camera)','Audio.update' is undefined) 2. Error: ReferenceError: Can't find variable: Drone (http://localhost:8080/js/main.js:69:26)

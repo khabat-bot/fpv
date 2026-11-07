@@ -198,6 +198,22 @@ async def ws_send_json(writer, obj):
     await ws_send_frame(writer, 1, json.dumps(obj).encode('utf-8'))
 
 
+def http_response(status, headers, body=b''):
+    """Build a complete HTTP/1.1 response.
+
+    This server handles exactly one request per TCP connection, so every
+    response advertises `Connection: close`. Letting the client assume a
+    persistent connection while the server closes the socket makes browsers
+    (notably Safari) and the Cloudflare tunnel occasionally lose resources
+    such as js/audio.js and js/physics.js, which then look like missing
+    globals (`Audio` / `Drone`) in the page.
+    """
+    lines = ['HTTP/1.1 ' + status, 'Connection: close']
+    lines.extend(name + ': ' + value for name, value in headers)
+    lines.append('Content-Length: ' + str(len(body)))
+    return ('\r\n'.join(lines) + '\r\n\r\n').encode('ascii') + body
+
+
 # --- Request handling ----------------------------------------------------
 
 async def handle_client(reader, writer):
@@ -244,14 +260,11 @@ async def handle_client(reader, writer):
         body = json.dumps({
             'enabled': True, 'version': 1, 'rooms': len(rooms)
         }).encode('utf-8')
-        writer.write(
-            b'HTTP/1.1 200 OK\r\n'
-            b'Content-Type: application/json\r\n'
-            b'Cache-Control: no-store\r\n'
-            b'Access-Control-Allow-Origin: *\r\n'
-            b'Content-Length: ' + str(len(body)).encode('ascii') + b'\r\n'
-            b'\r\n' + body
-        )
+        writer.write(http_response('200 OK', [
+            ('Content-Type', 'application/json'),
+            ('Cache-Control', 'no-store'),
+            ('Access-Control-Allow-Origin', '*'),
+        ], body))
         try: await writer.drain()
         except Exception: pass
         try: writer.close()
@@ -279,14 +292,11 @@ async def handle_client(reader, writer):
         body = json.dumps({
             'enabled': True, 'rooms': public_rooms
         }).encode('utf-8')
-        writer.write(
-            b'HTTP/1.1 200 OK\r\n'
-            b'Content-Type: application/json\r\n'
-            b'Cache-Control: no-store\r\n'
-            b'Access-Control-Allow-Origin: *\r\n'
-            b'Content-Length: ' + str(len(body)).encode('ascii') + b'\r\n'
-            b'\r\n' + body
-        )
+        writer.write(http_response('200 OK', [
+            ('Content-Type', 'application/json'),
+            ('Cache-Control', 'no-store'),
+            ('Access-Control-Allow-Origin', '*'),
+        ], body))
         try: await writer.drain()
         except Exception: pass
         try: writer.close()
@@ -297,7 +307,7 @@ async def handle_client(reader, writer):
     if method == 'POST' and path.startswith('/upload-map'):
         content_length = int(headers.get('content-length', 0))
         if content_length > 50 * 1024 * 1024:
-            writer.write(b'HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n')
+            writer.write(http_response('413 Payload Too Large', []))
             try: await writer.drain()
             except Exception: pass
             try: writer.close()
@@ -319,9 +329,9 @@ async def handle_client(reader, writer):
             await broadcast_json(rooms[room], {
                 't': 'map_change', 'url': rooms[room]['map_url']
             })
-            writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n')
+            writer.write(http_response('200 OK', []))
         else:
-            writer.write(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n')
+            writer.write(http_response('400 Bad Request', []))
         try: await writer.drain()
         except Exception: pass
         try: writer.close()
@@ -337,15 +347,12 @@ async def handle_client(reader, writer):
         if fs_path and os.path.exists(fs_path):
             with open(fs_path, 'rb') as f:
                 body = f.read()
-            writer.write(
-                b'HTTP/1.1 200 OK\r\n'
-                b'Content-Type: model/gltf-binary\r\n'
-                b'Cache-Control: no-cache\r\n'
-                b'Content-Length: ' + str(len(body)).encode('ascii') + b'\r\n'
-                b'\r\n' + body
-            )
+            writer.write(http_response('200 OK', [
+                ('Content-Type', 'model/gltf-binary'),
+                ('Cache-Control', 'no-cache'),
+            ], body))
         else:
-            writer.write(b'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n')
+            writer.write(http_response('404 Not Found', []))
         try: await writer.drain()
         except Exception: pass
         try: writer.close()
@@ -362,7 +369,7 @@ async def handle_client(reader, writer):
     except ValueError:
         inside_root = False
     if not inside_root:
-        writer.write(b'HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n')
+        writer.write(http_response('403 Forbidden', []))
         try: await writer.drain()
         except Exception: pass
         try: writer.close()
@@ -371,7 +378,7 @@ async def handle_client(reader, writer):
     if os.path.isdir(fs_path):
         fs_path = os.path.join(fs_path, 'index.html')
     if not os.path.exists(fs_path) or not os.path.isfile(fs_path):
-        writer.write(b'HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n')
+        writer.write(http_response('404 Not Found', []))
         try: await writer.drain()
         except Exception: pass
         try: writer.close()
@@ -383,20 +390,19 @@ async def handle_client(reader, writer):
         with open(fs_path, 'rb') as f:
             body = f.read()
     except Exception:
-        writer.write(b'HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n')
+        writer.write(http_response('500 Internal Server Error', []))
         try: await writer.drain()
         except Exception: pass
         try: writer.close()
         except Exception: pass
         return
 
-    writer.write(
-        ('HTTP/1.1 200 OK\r\n'
-         'Content-Type: ' + ctype + '\r\n'
-         'Cache-Control: no-cache\r\n'
-         'Content-Length: ' + str(len(body)) + '\r\n'
-         '\r\n').encode('ascii') + body
-    )
+    writer.write(http_response('200 OK', [
+        ('Content-Type', ctype),
+        ('Cache-Control', 'no-store, no-cache, must-revalidate'),
+        ('Pragma', 'no-cache'),
+        ('Expires', '0'),
+    ], body))
     try: await writer.drain()
     except Exception: pass
     try: writer.close()

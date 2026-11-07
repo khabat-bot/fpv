@@ -7,6 +7,15 @@ window.Input = (function () {
 
   function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
+  /* The audio module is loaded before this one, but never assume it is
+     present: `window.Audio` is also the browser's built-in media
+     constructor, so an unguarded call would throw instead of no-op. */
+  function resumeAudio() {
+    if (window.SimAudio && typeof window.SimAudio.resume === 'function') {
+      window.SimAudio.resume();
+    }
+  }
+
   /* Touch-capable devices fly with the on-screen gimbals, so the HUD
      stick preview is redundant. Mouse/keyboard devices have no gimbals,
      so the HUD preview is their only stick readout. Apply the mode as a
@@ -53,9 +62,9 @@ window.Input = (function () {
       if (e.touches.length > 1) e.preventDefault();
     }, { passive: false });
 
-    document.addEventListener('touchstart', function () { Audio.resume(); },
+    document.addEventListener('touchstart', function () { resumeAudio(); },
       { passive: true });
-    document.addEventListener('click', function () { Audio.resume(); });
+    document.addEventListener('click', function () { resumeAudio(); });
   }
 
   function Joystick(el, opts) {
@@ -88,7 +97,7 @@ window.Input = (function () {
 
     function onDown(e) {
       if (self.pointerId !== null) return;
-      Audio.resume();
+      resumeAudio();
       self.pointerId = e.pointerId;
       self.active = true;
       self.measure();
@@ -203,7 +212,7 @@ window.Input = (function () {
       });
 
       window.addEventListener('keydown', function (e) {
-        Audio.resume();
+        resumeAudio();
         if (e.repeat) return;
         self.keys[e.code] = true;
 

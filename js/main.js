@@ -6,6 +6,65 @@
 
 (function () {
 
+  /* ------------------------- boot guard ------------------------------
+     index.html loads several plain <script> files in order. If one of
+     those requests is dropped (a keep-alive socket being reset by the
+     dev server used to do this), the browser can run main.js without a
+     dependency such as `Drone` or `SimAudio`, producing a blank page.
+     Check every dependency first and reload any missing file once with a
+     cache-busted URL before starting the app. -------------------------- */
+  const DEPENDENCIES = [
+    { name: 'THREE',    src: 'vendor/three.min.js', ready: () => window.THREE && window.THREE.WebGLRenderer },
+    { name: 'CFG',      src: 'js/config.js',        ready: () => !!window.CFG },
+    { name: 'SimAudio', src: 'js/audio.js',         ready: () => window.SimAudio && typeof window.SimAudio.update === 'function' },
+    { name: 'World',    src: 'js/world.js',         ready: () => !!window.World },
+    { name: 'Drone',    src: 'js/physics.js',       ready: () => typeof window.Drone === 'function' },
+    { name: 'Input',    src: 'js/input.js',         ready: () => !!window.Input },
+    { name: 'HUD',      src: 'js/hud.js',           ready: () => !!window.HUD }
+  ];
+
+  function missingDependencies() {
+    return DEPENDENCIES.filter(function (dep) {
+      try { return !dep.ready(); } catch (err) { return true; }
+    });
+  }
+
+  function loadScript(src) {
+    return new Promise(function (resolve) {
+      const el = document.createElement('script');
+      /* Cache-bust so a truncated cached response is not reused. */
+      el.src = src + (src.indexOf('?') === -1 ? '?' : '&') + 'retry=' + Date.now();
+      el.async = false;
+      el.onload = function () { resolve(); };
+      el.onerror = function () { resolve(); };
+      document.head.appendChild(el);
+    });
+  }
+
+  let bootRetries = 0;
+
+  function startWhenReady() {
+    const missing = missingDependencies();
+    if (!missing.length) { boot(); return; }
+    if (bootRetries >= 5) {
+      console.error('FPV: unable to load ' + missing.map(function (dep) {
+        return dep.name;
+      }).join(', '));
+      return;
+    }
+    bootRetries += 1;
+    setTimeout(function () {
+      /* Reload in dependency order so THREE is in place before the
+         modules that use it are re-executed. */
+      (function next(i) {
+        if (i >= missing.length) { startWhenReady(); return; }
+        loadScript(missing[i].src).then(function () { next(i + 1); });
+      })(0);
+    }, 150 * bootRetries);
+  }
+
+  function boot() {
+
   const canvas = document.getElementById('scene');
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
   const dpr = window.devicePixelRatio || 1;
@@ -66,7 +125,7 @@
   let envSkyMat = (world.skyMat || (world.sky && world.sky.material)) || null;
 
   /* --------------------------- drone --------------------------------- */
-  const drone = new Drone();
+  const drone = new window.Drone();
   drone.colliders = world.colliders;
 
   function setFloorFromWorld(w) {
@@ -139,8 +198,8 @@ if (window.Replay) Replay.init(scene);
     fill.position.set(-2, 1, -2);
     previewScene.add(fill);
     previewCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 20);
-    previewVisual = DroneVisual.createInstance(previewScene);
-    if (window.Loadout) previewVisual.setLoadout(settings.loadout);
+    previewVisual = window.DroneVisual ? DroneVisual.createInstance(previewScene) : null;
+    if (previewVisual && window.Loadout) previewVisual.setLoadout(settings.loadout);
     console.log('[preview] initialized');
   }
 
@@ -302,14 +361,14 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   }
   function toggleArm() {
     if (drone.crashed) return;
-    Audio.resume();
+    if (window.SimAudio) SimAudio.resume();
     drone.toggleArm();
-    Audio.armBeep(drone.armed);
+    if (window.SimAudio) SimAudio.armBeep(drone.armed);
     if (drone.armed) flightTime = 0;
     updateArmButton();
   }
   function respawn() {
-    Audio.resume();
+    if (window.SimAudio) SimAudio.resume();
     drone.reset(world.spawn.x, world.spawn.z);
     flightTime = 0;
     crashShown = false;
@@ -336,9 +395,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   });
 
   btnSound.addEventListener('click', () => {
-    Audio.resume();
-    const next = !Audio.isMuted();
-    Audio.setMuted(next);
+    if (window.SimAudio) SimAudio.resume();
+    const next = window.SimAudio ? !SimAudio.isMuted() : true;
+    if (window.SimAudio) SimAudio.setMuted(next);
     btnSound.textContent = next ? 'SND: OFF' : 'SND: ON';
     btnSound.classList.toggle('off', next);
     btnSound.classList.toggle('on', !next);
@@ -1408,7 +1467,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         } else if (setting === 'wind') {
           settings.wind = val;
           applyWind();
-          if (typeof Audio !== 'undefined' && Audio.resume) Audio.resume();
+          if (window.SimAudio && SimAudio.resume) SimAudio.resume();
         } else if (setting === 'shake') {
           settings.shake = val;
           applyShake();
@@ -2212,7 +2271,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     /* Update ghost trail (only for the live drone) */
     if (!replayActive && window.GhostTrail) GhostTrail.update(drone);
 
-    Audio.update(viewDrone, hudStick, camera);
+    if (window.SimAudio && typeof SimAudio.update === 'function') {
+      SimAudio.update(viewDrone, hudStick, camera);
+    }
 
     /* Loadout preview — only when the settings panel is open and the
        LOADOUT tab is showing. initPreview() runs on first visit. */
@@ -2224,7 +2285,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
 
     if (!replayActive && drone.crashed && !crashShown) {
       crashShown = true;
-      Audio.crashSound();
+      if (window.SimAudio && SimAudio.crashSound) SimAudio.crashSound();
       HUD.showCrash(true);
       updateArmButton();
     }
@@ -2234,5 +2295,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   }
 
   requestAnimationFrame(frame);
+
+  } /* boot */
+
+  startWhenReady();
 
 })();
