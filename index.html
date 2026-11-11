@@ -126,11 +126,13 @@
           <button class="sp-opt" data-val="0">HIDE</button>
         </div>
       </div>
-      <div class="sp-row">
-        <button id="btn-map" class="sp-opt wide">IMPORT MAP (.GLB/.GLTF)</button>
-      </div>
-      <div class="sp-row">
-        <button id="btn-unload-map" class="sp-opt wide">UNLOAD CUSTOM MAP</button>
+      <div class="sp-row sp-map-row">
+        <span class="sp-lbl">Map</span>
+        <span id="map-status" class="sp-map-status">DEFAULT</span>
+        <div class="sp-group">
+          <button id="btn-map" class="sp-opt">LOAD MAP</button>
+          <button id="btn-unload-map" class="sp-opt danger" disabled>UNLOAD</button>
+        </div>
       </div>
       <div class="sp-section" id="map-browser">
         <div class="sp-section-title">SAVED MAPS</div>
@@ -369,9 +371,6 @@
         <span class="mp-lbl">Access</span>
         <span id="mp-visibility-badge" class="mp-badge private">PRIVATE</span>
       </div>
-      <div class="mp-row" id="mp-share-map-row" style="display:none">
-        <button id="mp-share-map" class="mp-btn wide">SHARE MAP</button>
-      </div>
       <div class="mp-row">
         <span class="mp-lbl">Players</span>
         <div id="mp-players" class="mp-players"></div>
@@ -385,7 +384,6 @@
 </div>
 
 <input id="map-file" type="file" accept=".glb,.gltf" style="display:none" />
-<input id="mp-map-file" type="file" accept=".glb,.gltf" style="display:none" />
 
 <!-- ======================= REPLAY ============================ -->
 <div id="replay-panel" class="hidden">

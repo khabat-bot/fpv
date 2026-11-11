@@ -1301,6 +1301,9 @@ fn handle_client(mut stream: TcpStream) {
             .unwrap_or_default()
             .trim()
             .to_uppercase();
+        // Who uploaded — used to tag the broadcast and skip echoing
+        // map_change back to the uploader (they already have it loaded).
+        let pid = query_param(query, "pid").unwrap_or_default();
         let exists = is_code(&room) && lk(rooms()).contains_key(&room);
         if !exists {
             respond(&mut stream, "400 Bad Request", &[], b"");
@@ -1317,7 +1320,17 @@ fn handle_client(mut stream: TcpStream) {
             let mut g = lk(rooms());
             if let Some(r) = g.get_mut(&room) {
                 r.map_url = Some(url.clone());
-                broadcast(r, &jobj(vec![("t", s("map_change")), ("url", s(&url))]), None, &mut out);
+                let skip = if pid.is_empty() { None } else { Some(pid.as_str()) };
+                broadcast(
+                    r,
+                    &jobj(vec![
+                        ("t", s("map_change")),
+                        ("url", s(&url)),
+                        ("by", s(&pid)),
+                    ]),
+                    skip,
+                    &mut out,
+                );
             }
         }
         flush_out(out);

@@ -890,6 +890,41 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   /* -------------------- map loading ------------------- */
   let currentCustomMapId = null;
 
+  /* Transient corner toasts — used by multiplayer events and by map
+     sharing, so it lives in the shared scope rather than the MP UI. */
+  function showToast(text, kind) {
+    var root = document.getElementById('mp-toasts');
+    if (!root || !text) return;
+    var el = document.createElement('div');
+    el.className = 'mp-toast' + (kind ? ' ' + kind : '');
+    el.textContent = text;
+    root.appendChild(el);
+    while (root.children.length > 4) root.removeChild(root.firstChild);
+    setTimeout(function () { el.classList.add('out'); }, 2400);
+    setTimeout(function () {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }, 2850);
+  }
+
+  /* In a room, a freshly loaded local map is pushed to everyone
+     automatically — there is no separate "share" step. The server
+     broadcasts map_change with our pid, which the other players
+     (and we ourselves) act on. */
+  function maybeShareMapToRoom(file) {
+    if (!window.Net || !Net.isConnected || !Net.isConnected()) return;
+    var room = (window.Net && Net.getRoom) ? Net.getRoom() : '';
+    if (!room || !file) return;
+    showToast('Sharing map with the room…', 'map');
+    Net.uploadMap(room, file, (Net.getMyPid && Net.getMyPid()) || undefined)
+      .then(function () {
+        showToast('Map shared with the room', 'good');
+      })
+      .catch(function (e) {
+        console.error('Map share failed:', e);
+        showToast('Map share failed', 'leave');
+      });
+  }
+
   function refreshMapBrowser() {
     var listEl = document.getElementById('map-list');
     if (!listEl) return;
@@ -938,9 +973,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
               blob = new Blob([data], { type: 'model/gltf-binary' });
             }
             var file = new File([blob], item.name || 'map.glb', { type: 'model/gltf-binary' });
-            currentCustomMapId = item.id;
-            loadMapFromFile(file, false);
-            refreshMapBrowser();
+            loadMapFromFile(file, false, { mapId: item.id });
           });
         };
         var delBtn = document.createElement('button');
@@ -966,9 +999,28 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     }).catch(function(){});
   }
 
+  /* Latest room-shared map URL we already applied, so reconnects or
+     rejoins don't re-download the exact same map version. */
+  let roomMapUrl = null;
+
+  /* Settings-panel map row: status text + enabled UNLOAD button. */
+  function setMapStatus(label) {
+    var el = document.getElementById('map-status');
+    if (el) {
+      el.textContent = label || 'DEFAULT';
+      el.title = label || '';
+      el.classList.toggle('custom', !!label);
+    }
+    if (btnUnloadMap) btnUnloadMap.disabled = !label;
+  }
+
   function unloadCustomMap() {
+    /* Forget the room-shared version so a reconnect or a new upload
+       re-downloads instead of being deduped away. */
+    roomMapUrl = null;
+    setMapStatus(null);
+    if (btnMap) { btnMap.textContent = 'LOAD MAP'; btnMap.disabled = false; btnMap.classList.remove('on'); }
     if (!world || !world.isCustomMap) {
-      if (btnUnloadMap) { btnUnloadMap.classList.remove('on'); btnUnloadMap.textContent = 'UNLOAD CUSTOM MAP'; }
       return;
     }
     disposeWorldObjects(world);
@@ -991,14 +1043,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     if (window.HUD) HUD.showCrash(false);
     updateArmButton();
     currentCustomMapId = null;
-    if (btnMap) { btnMap.textContent = 'IMPORT MAP (.GLB/.GLTF)'; btnMap.classList.remove('on'); }
-    if (btnUnloadMap) { btnUnloadMap.classList.remove('on'); btnUnloadMap.textContent = 'UNLOAD CUSTOM MAP'; }
     applyEnv(settings.env || 'DAY');
     refreshMapBrowser();
   }
 
-  function loadMapFromFile(file, saveToIDB) {
-    if (btnMap) { btnMap.textContent = 'LOADING…'; btnMap.classList.remove('off','on'); }
+  function loadMapFromFile(file, saveToIDB, opts) {
+    opts = opts || {};
+    if (btnMap) { btnMap.textContent = 'LOADING…'; btnMap.disabled = true; }
 
     MAP.load(file).then(result => {
       disposeWorldObjects(world);
@@ -1072,9 +1123,10 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (window.HUD) HUD.showCrash(false);
       updateArmButton();
 
-      const label = (file.name || 'MAP').replace(/\.[^.]+$/, '').slice(0, 12);
-      if (btnMap) { btnMap.textContent = 'MAP: ' + label; btnMap.classList.add('on'); }
-      if (btnUnloadMap) { btnUnloadMap.classList.add('on'); btnUnloadMap.textContent = 'UNLOAD CUSTOM MAP'; }
+      const label = (file.name || 'MAP').replace(/\.[^.]+$/, '').slice(0, 16);
+      setMapStatus(label);
+      if (btnMap) { btnMap.textContent = 'LOAD MAP'; btnMap.disabled = false; }
+      currentCustomMapId = opts.mapId || null;
 
       if (saveToIDB) {
         const id = uid();
@@ -1100,13 +1152,19 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       console.log('DPR ' + renderer.getPixelRatio().toFixed(2) +
                   ', ' + result.meshCount + ' meshes, ' +
                   result.colliders.length + ' colliders');
+
+      /* Multiplayer: loading a map while in a room shares it with
+         everyone automatically. Maps that came FROM the room
+         (opts.fromRoom) are never re-uploaded, otherwise the room
+         would echo its own map back around forever. */
+      if (!opts.fromRoom) maybeShareMapToRoom(file);
     }).catch(err => {
       console.error('Map load failed:', err);
       if (btnMap) {
         btnMap.textContent = 'LOAD FAILED';
         setTimeout(() => {
-          btnMap.textContent = 'IMPORT MAP (.GLB/.GLTF)';
-          btnMap.classList.remove('on');
+          btnMap.textContent = 'LOAD MAP';
+          btnMap.disabled = false;
         }, 2500);
       }
     });
@@ -1621,20 +1679,6 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     var mpHud = document.getElementById('mp-hud');
     var mpHudCount = document.getElementById('mp-hud-count');
     var mpHudPing = document.getElementById('mp-hud-ping');
-    var toastRoot = document.getElementById('mp-toasts');
-
-    function showToast(text, kind) {
-      if (!toastRoot || !text) return;
-      var el = document.createElement('div');
-      el.className = 'mp-toast' + (kind ? ' ' + kind : '');
-      el.textContent = text;
-      toastRoot.appendChild(el);
-      while (toastRoot.children.length > 4) toastRoot.removeChild(toastRoot.firstChild);
-      setTimeout(function () { el.classList.add('out'); }, 2400);
-      setTimeout(function () {
-        if (el.parentNode) el.parentNode.removeChild(el);
-      }, 2850);
-    }
 
     function updateMpHud() {
       if (!mpHud) return;
@@ -1847,29 +1891,21 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       }
     }, 5000);
 
-    function amHost() {
-      var myPid = (window.Net && Net.getMyPid) ? Net.getMyPid() : null;
-      return !!(myPid && currentHostPid && myPid === currentHostPid);
-    }
-
-    function refreshHostUi() {
-      var row = document.getElementById('mp-share-map-row');
-      if (row) row.style.display = amHost() ? '' : 'none';
-      renderPlayers();
-    }
-
     function loadMapFromUrl(url) {
-      setStatus('Downloading map...');
+      if (!url || url === roomMapUrl) return;  // already showing this exact version
+      roomMapUrl = url;
+      setStatus('Downloading room map...');
       fetch(url).then(function(r) {
         if (!r.ok) throw new Error('Map download failed');
         return r.blob();
       }).then(function(blob) {
         var file = new File([blob], 'shared-map.glb', { type: 'model/gltf-binary' });
-        loadMapFromFile(file, false);
-        setStatus('Map loaded!');
+        loadMapFromFile(file, false, { fromRoom: true });
+        setStatus('Room map loaded');
       }).catch(function(e) {
         console.error('Map load failed:', e);
-        setStatus('Map load failed');
+        roomMapUrl = null;
+        setStatus('Map download failed');
       });
     }
 
@@ -1926,7 +1962,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         badge.textContent = msg.public ? 'PUBLIC' : 'PRIVATE';
         badge.className = 'mp-badge ' + (msg.public ? 'public' : 'private');
       }
-      refreshHostUi();
+      renderPlayers();
       showInRoom();
       setStatus('');
       if (msg.map_url) loadMapFromUrl(msg.map_url);
@@ -1963,8 +1999,6 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (window.MP) MP.clearAll();
       peerInfo = {};
       currentHostPid = null;
-      var shareRow = document.getElementById('mp-share-map-row');
-      if (shareRow) shareRow.style.display = 'none';
       showConnect();
       refreshServers();
       setStatus('left room');
@@ -2013,7 +2047,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
 
       Net.on('host_change', function (msg) {
         currentHostPid = msg.pid;
-        refreshHostUi();
+        renderPlayers();
         var myPid = Net.getMyPid();
         if (msg.pid && msg.pid === myPid) {
           showToast('You are now the host', 'host');
@@ -2053,8 +2087,6 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         if (window.MP) MP.clearAll();
         peerInfo = {};
         currentHostPid = null;
-        var shareRow = document.getElementById('mp-share-map-row');
-        if (shareRow) shareRow.style.display = 'none';
         showConnect();
         refreshServers();
         setStatus('Room closed. Disconnected.');
@@ -2064,27 +2096,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       });
 
       Net.on('map_change', function (msg) {
-        if (msg.url) loadMapFromUrl(msg.url);
-      });
-
-      document.getElementById('mp-share-map').addEventListener('click', function () {
-        document.getElementById('mp-map-file').click();
-      });
-
-      document.getElementById('mp-map-file').addEventListener('change', function (ev) {
-        var file = ev.target.files[0];
-        if (!file || !amHost()) return;
-        var room = Net.getRoom();
-        if (!room) return;
-        setStatus('Uploading map...');
-        Net.uploadMap(room, file).then(function() {
-          setStatus('Map shared!');
-          loadMapFromFile(file, false);
-        }).catch(function(e) {
-          console.error('Map upload failed:', e);
-          setStatus('Upload failed');
-        });
-        ev.target.value = '';
+        /* The uploader already has the map loaded locally (it was
+           auto-shared on load), so skip our own broadcast. */
+        if (msg.by && Net.getMyPid() && msg.by === Net.getMyPid()) return;
+        if (!msg.url) return;
+        var who = msg.by && peerInfo[msg.by];
+        showToast(who && who.nickname ? who.nickname + ' changed the map' : 'Map changed', 'map');
+        loadMapFromUrl(msg.url);
       });
     }
   })();

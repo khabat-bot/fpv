@@ -297,8 +297,10 @@ window.Net = (function () {
       return (j && j.rooms) || [];
     });
   }
-  function uploadMap(room, file) {
-    return fetch('/upload-map?room=' + encodeURIComponent(room), {
+  function uploadMap(room, file, pid) {
+    var url = '/upload-map?room=' + encodeURIComponent(room);
+    if (pid) url += '&pid=' + encodeURIComponent(pid);
+    return fetch(url, {
       method: 'POST',
       body: file
     }).then(function (r) {

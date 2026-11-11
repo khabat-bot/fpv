@@ -320,6 +320,9 @@ async def handle_client(reader, writer):
             body += chunk
         params = parse_qs(path.split('?', 1)[1] if '?' in path else '')
         room = (params.get('room') or [''])[0].strip().upper()
+        # Who uploaded — tags the broadcast and stops map_change from
+        # echoing back to the uploader (they already have it loaded).
+        pid = (params.get('pid') or [''])[0]
         if ROOM_CODE_RE.match(room) and room in rooms:
             fs_path = map_path(room)
             with open(fs_path, 'wb') as f:
@@ -327,8 +330,8 @@ async def handle_client(reader, writer):
             version = int(time.time() * 1000)
             rooms[room]['map_url'] = f'/map/{room}.glb?v={version}'
             await broadcast_json(rooms[room], {
-                't': 'map_change', 'url': rooms[room]['map_url']
-            })
+                't': 'map_change', 'url': rooms[room]['map_url'], 'by': pid
+            }, skip_pid=pid or None)
             writer.write(http_response('200 OK', []))
         else:
             writer.write(http_response('400 Bad Request', []))
