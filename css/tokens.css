@@ -1,0 +1,210 @@
+/* =========================================================================
+   FPV Sim — Design Tokens
+   Single source of truth for colors, spacing, typography, shadows, etc.
+   Import this FIRST in index.html before style.css
+   ========================================================================= */
+
+:root {
+  /* ============================================================
+     COLOR PALETTE — FPV/Racing aesthetic: dark technical, cyan/teal accent
+     ============================================================ */
+
+  /* --- Base neutrals --- */
+  --color-bg:           #05080c;
+  --color-bg-elevated:  #0a121a;
+  --color-bg-panel:     #0e1824;
+  --color-bg-panel-hover: #142030;
+  --color-border:       #1e3a50;
+  --color-border-bright: #2a5070;
+  --color-border-focus: #3aa0d8;
+
+  /* --- Text --- */
+  --color-text:         #d8e8f8;
+  --color-text-dim:     #7a9cc8;
+  --color-text-muted:   #4a6a8a;
+  --color-text-inverse: #05080c;
+
+  /* --- Accent (FPV teal/green) --- */
+  --color-accent:       #6ef2a0;
+  --color-accent-dim:   rgba(110, 242, 160, 0.55);
+  --color-accent-strong: #40e080;
+  --color-accent-glow:  rgba(110, 242, 160, 0.35);
+
+  /* --- Secondary accent (cyan/blue) --- */
+  --color-cyan:         #4ad0ff;
+  --color-cyan-dim:     rgba(74, 208, 255, 0.55);
+  --color-cyan-strong:  #00c0ff;
+
+  /* --- Semantic --- */
+  --color-success:      #6ef2a0;
+  --color-warning:      #ffd060;
+  --color-danger:       #ff6a6a;
+  --color-danger-dim:   rgba(255, 106, 106, 0.55);
+  --color-info:         #4ad0ff;
+
+  /* --- OSD specific (backward compat) --- */
+  --osd:                var(--color-text);
+  --osd-dim:            var(--color-text-dim);
+  --accent:             var(--color-accent);
+  --btn-bg:             var(--color-bg-panel);
+  --btn-border:         var(--color-border);
+
+  /* ============================================================
+     SPACING SCALE — 4px base unit, fluid with clamp()
+     ============================================================ */
+  --space-0:   0;
+  --space-1:   2px;   /* 0.5u */
+  --space-2:   4px;   /* 1u */
+  --space-3:   6px;   /* 1.5u */
+  --space-4:   8px;   /* 2u */
+  --space-5:   10px;  /* 2.5u */
+  --space-6:   12px;  /* 3u */
+  --space-8:   16px;  /* 4u */
+  --space-10:  20px;  /* 5u */
+  --space-12:  24px;  /* 6u */
+  --space-16:  32px;  /* 8u */
+  --space-20:  40px;  /* 10u */
+  --space-24:  48px;  /* 12u */
+
+  /* Fluid spacing for responsive layouts */
+  --space-fluid-xs:  clamp(4px, 1vw, 8px);
+  --space-fluid-sm:  clamp(8px, 2vw, 16px);
+  --space-fluid-md:  clamp(12px, 3vw, 24px);
+  --space-fluid-lg:  clamp(16px, 4vw, 32px);
+  --space-fluid-xl:  clamp(24px, 5vw, 48px);
+
+  /* ============================================================
+     TYPOGRAPHY — Monospace technical, fluid scaling
+     ============================================================ */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-ui:   -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  /* Fluid type scale */
+  --text-xs:   clamp(9px, 0.75rem, 10px);
+  --text-sm:   clamp(10px, 0.8rem, 11px);
+  --text-base: clamp(11px, 0.875rem, 13px);
+  --text-lg:   clamp(12px, 1rem, 14px);
+  --text-xl:   clamp(14px, 1.125rem, 16px);
+  --text-2xl:  clamp(18px, 1.5rem, 22px);
+  --text-3xl:  clamp(24px, 2rem, 32px);
+  --text-4xl:  clamp(32px, 3rem, 48px);
+
+  /* Line heights */
+  --leading-tight:   1.2;
+  --leading-normal:  1.4;
+  --leading-relaxed: 1.6;
+
+  /* Letter spacing */
+  --tracking-tight:  -0.02em;
+  --tracking-normal: 0;
+  --tracking-wide:   0.08em;
+  --tracking-wider:  0.14em;
+  --tracking-widest: 0.22em;
+
+  /* ============================================================
+     BORDER RADIUS
+     ============================================================ */
+  --radius-none:  0;
+  --radius-sm:    4px;
+  --radius-md:    6px;
+  --radius-lg:    8px;
+  --radius-xl:    10px;
+  --radius-2xl:   12px;
+  --radius-3xl:   14px;
+  --radius-full:  9999px;
+
+  /* ============================================================
+     SHADOWS — Layered depth for panels, buttons, modals
+     ============================================================ */
+  --shadow-xs:   0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm:   0 2px 6px rgba(0, 0, 0, 0.35);
+  --shadow-md:   0 4px 14px rgba(0, 0, 0, 0.4);
+  --shadow-lg:   0 8px 28px rgba(0, 0, 0, 0.45);
+  --shadow-xl:   0 16px 48px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 20px var(--color-accent-glow);
+  --shadow-glow-cyan: 0 0 20px rgba(74, 208, 255, 0.25);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  /* ============================================================
+     Z-INDEX SCALE
+     ============================================================ */
+  --z-bg:        0;    /* Canvas */
+  --z-vignette:  3;    /* Vignette overlay */
+  --z-hud:       10;   /* HUD/OSD */
+  --z-sticks:    20;   /* Virtual joysticks */
+  --z-help:      25;   /* Help overlay */
+  --z-buttons:   30;   /* Top-right buttons */
+  --z-crash:     40;   /* Crash overlay */
+  --z-panels:    100;  /* Settings, MP, Replay panels */
+  --z-toast:     9997; /* MP toasts */
+  --z-mp-hud:    9998; /* MP HUD pill */
+  --z-net-badge: 9999; /* Network badge */
+
+  /* ============================================================
+     BREAKPOINTS — For reference in media queries
+     ============================================================ */
+  --bp-xs:   320px;  /* Small phones */
+  --bp-sm:   375px;  /* Standard phones */
+  --bp-md:   480px;  /* Large phones */
+  --bp-lg:   768px;  /* Tablets */
+  --bp-xl:   1024px; /* Small laptops */
+  --bp-2xl:  1440px; /* Desktop */
+  --bp-3xl:  1920px; /* Large desktop */
+
+  /* ============================================================
+     TRANSITIONS
+     ============================================================ */
+  --transition-fast:  80ms ease;
+  --transition-base:  120ms ease;
+  --transition-slow:  200ms ease;
+
+  /* ============================================================
+     TOUCH TARGETS — Minimum 44px for accessibility
+     ============================================================ */
+  --touch-target-min: 44px;
+  --touch-target-comfortable: 48px;
+
+  /* ============================================================
+     SAFE AREA — iOS notches, Android gestures
+     ============================================================ */
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+}
+
+/* =========================================================================
+   REDUCED MOTION — Respect user preference
+   ========================================================================= */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-fast:  0ms;
+    --transition-base:  0ms;
+    --transition-slow:  0ms;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* =========================================================================
+   HIGH CONTRAST MODE — Windows high contrast
+   ========================================================================= */
+@media (forced-colors: active) {
+  :root {
+    --color-border:       CanvasText;
+    --color-border-bright: Highlight;
+    --color-border-focus: Highlight;
+    --btn-border:         CanvasText;
+  }
+  .btn, .sp-opt, .mp-opt, .map-act, .rp-act {
+    forced-color-adjust: none;
+    border-color: CanvasText;
+  }
+  .btn.on, .sp-opt.active, .sp-opt.on, .mp-opt.active {
+    background: Highlight;
+    color: HighlightText;
+  }
+}
