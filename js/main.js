@@ -212,7 +212,9 @@ if (window.Replay) Replay.init(scene);
     const sz = previewRenderer.getSize(new THREE.Vector2());
     if (Math.abs(sz.x - w) > 1 || Math.abs(sz.y - h) > 1) {
       previewRenderer.setSize(w, h, false);
+gate
       previewCamera.aspect = w / h;
+git
       previewCamera.updateProjectionMatrix();
     }
     previewVisual.update(previewDrone, previewIdleState, dt || 0.016);
@@ -2107,6 +2109,48 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     }
   })();
 
+
+/* ===== display shell wiring (settings Fullscreen button + rotate note) ===== */
+function wireDisplayShell() {
+  if (!window.IOS) return;
+  const $ = function (id) { return document.getElementById(id); };
+  const btn = $('btn-fullscreen');
+  const note = $('rotate-note');
+
+  function syncBtn() {
+    if (!btn) return;
+    const active = IOS.Fullscreen.isActive();
+    btn.textContent = active ? 'EXIT FULLSCREEN' : 'FULLSCREEN';
+    btn.classList.toggle('on', active);
+  }
+
+  if (!IOS.Fullscreen.isSupported()) {
+    if (btn) {
+      btn.textContent = 'FULLSCREEN N/A';
+      btn.disabled = true;
+    }
+    if (note) note.classList.add('hidden');
+  }
+
+  if (btn && IOS.Fullscreen.isSupported()) {
+    btn.addEventListener('click', function () {
+      IOS.Fullscreen.toggle(document.documentElement);
+    });
+  }
+
+  IOS.Fullscreen.onChange(function (active) {
+    syncBtn();
+    if (active && IOS.Screen && IOS.Screen.wakeOn) IOS.Screen.wakeOn();
+  });
+
+  IOS.Lifecycle.onResume(function () {
+    if (IOS.Fullscreen.isActive()) IOS.Screen.wakeOn();
+  });
+
+  wireDisplayShell();
+
+  syncBtn();
+}
   /* ============================ main loop ============================= */
   const PHYSICS_HZ = isMobile ? 120 : 240;
   const FIXED = 1 / PHYSICS_HZ;
@@ -2122,8 +2166,14 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
 
     let dt = (now - lastTime) / 1000;
     lastTime = now;
+    /* A hidden iOS tab stops firing rAF and returns with a huge dt; drop it
+       entirely while paused instead of clamping, so the quad does not jump. */
+    if (window.IOS && IOS.Lifecycle && IOS.Lifecycle.paused) dt = 0;
     if (dt > 0.1) dt = 0.1;
     if (dt < 0) dt = 0;
+    /* Skip the sim, audio and render work while paused; the next visible
+       frame resumes from here with dt already zeroed above. */
+    if (dt === 0) return;
 
     const state = Input.update(dt);
 

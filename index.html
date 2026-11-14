@@ -110,6 +110,16 @@
         </div>
       </div>
       <div class="sp-row">
+        <span class="sp-lbl">Display</span>
+        <div class="sp-group">
+          <button id="btn-fullscreen" class="sp-opt">FULLSCREEN</button>
+        </div>
+      </div>
+      <div id="rotate-note" class="sp-row hidden">
+        <span class="sp-lbl">Orientation</span>
+        <span class="sp-hint">Turn the phone to landscape to fly. Fullscreen is optional.</span>
+      </div>
+      <div class="sp-row">
         <span class="sp-lbl">FPS Cap</span>
         <div class="sp-group" data-setting="fpsCap">
           <button class="sp-opt" data-val="0">&#x221e;</button>
@@ -439,6 +449,7 @@
 <script src="js/drills.js"></script>
 <script src="js/replay-store.js"></script>
 <script src="js/replay.js"></script>
+<script src="js/lifecycle.js"></script>
 <script src="js/main.js"></script>
 
 <div id="mp-hud" class="mp-hud hidden">
@@ -448,5 +459,9 @@
 </div>
 <div id="mp-toasts" class="mp-toasts"></div>
 <div id="net-badge" class="net-badge hidden"></div>
+<div id="rotate-hint" aria-hidden="true">
+  <div class="rotate-icon">&#x21BB;</div>
+  <div class="rotate-text">Rotate to landscape<br><span>Virtual sticks need the wide view</span></div>
+</div>
 </body>
 </html>

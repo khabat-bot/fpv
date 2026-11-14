@@ -44,9 +44,16 @@ window.Input = (function () {
 
   function installIOSGuards() {
     let lastTapEnd = 0;
+    function isStick(t) {
+      if (!t) return false;
+      return t.closest('#stick-left, #stick-right');
+    }
+    /* Cancel the second touchend of a double-tap (iOS double-tap zoom) but
+       never on the sticks: releasing and re-gripping inside 350 ms is normal
+       flight input there. */
     document.addEventListener('touchend', function (e) {
       const now = Date.now();
-      if (now - lastTapEnd < 350) e.preventDefault();
+      if (now - lastTapEnd < 350 && !isStick(e.target)) e.preventDefault();
       lastTapEnd = now;
     }, { passive: false });
 

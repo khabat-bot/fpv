@@ -9,7 +9,38 @@
 
 ## Roadmap — path to a complete sim
 
-### 1. Real RC controller support (highest priority)
+Mobile-first: iOS Safari is the primary target. Priorities 1-4 below are what a
+player on an iPhone feels in the first session; do them before the content work.
+
+### 1. iOS touch-first playability (felt immediately)
+
+The page loads, but there is no game shell around the canvas on iOS. Nothing in
+`js/` or `css/` handles any of the following (`grep` for fullscreen / WakeLock /
+visibilitychange / pointerrawupdate finds nothing):
+
+- [ ] Fullscreen + landscape lock (Screen Orientation API / Fullscreen API,
+      with a fallback rotate-your-phone overlay in portrait) — otherwise the
+      attempt-to-scroll address bar eats vertical space and taps can zoom
+- [ ] Screen Wake Lock (`navigator.wakeLock`) so the display doesn't dim mid-flight
+- [ ] Disable double-tap zoom / pinch on the stick area — current guard in
+      `Input.installIOSGuards()` kills the *second* `touchend` within 350 ms,
+      which also eats fast touch-release-again stick input (`js/input.js:47`)
+- [ ] Pause + resume audio and freeze the sim on `visibilitychange`
+      (currently a lock-screen/background tab keeps the game loop running,
+      and `SimAudio` may be suspended without anything noticing)
+- [ ] Replace 120/240 Hz tuning with `maxTouchPoints`/device-class detection and
+      avoid the iPhone 60 Hz display oversampling the physics loop
+- [ ] Cap `devicePixelRatio` for render resolution — HIGH dpr = 2.0 is the
+      default on desktop, MED on mobile, but there is no cap for iPhone 3x
+      screens (the main cause of iOS heat/throttle)
+- [ ] `-webkit-fill-available` + `100dvh` for the viewport so the canvas doesn't
+      jump when the Safari toolbar collapses (CSS currently uses safe-area
+      insets only)
+- [ ] WebAudio unlock on the first user gesture already exists in `input.js`,
+      but `SimAudio` never resumes after the iOS silent switch or a call — add
+      vendor interruption handling (`AudioContext.onstatechange`)
+
+### 2. Real RC controller support
 
 No gamepad/Bluetooth/USB input exists yet; only keyboard + virtual sticks.
 
