@@ -48,6 +48,7 @@ js/parts.js  → PARTS, Loadout
 js/drills.js → Drills
 js/replay-store.js → ReplayStore  (IndexedDB library)
 js/replay.js → Replay        (recorder + preview playback)
+js/telemetry.js → Telemetry  (blackbox recorder + live attitude graph)
 js/lifecycle.js → IOS        (tab pause/resume, wake lock, --vh, fullscreen, portrait flag)
 js/main.js   (bootstrap + game loop; loads LAST)
 ```

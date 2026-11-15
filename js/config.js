@@ -120,6 +120,19 @@ window.CFG = {
     lossHoldMs: 350
   },
 
+  /* ----------------------------- telemetry ------------------------------
+     Flight data recorder + OSD attitude graph (js/telemetry.js).
+       sampleHz:      blackbox samples per second (CSV rate)
+       windowSec:     rolling log length — the CSV exports exactly this much
+       graphWindowSec: time span shown by the live attitude graph
+       graphRangeDeg:  half-scale of each graph lane, degrees of attitude */
+  telemetry: {
+    sampleHz: 50,
+    windowSec: 60,
+    graphWindowSec: 10,
+    graphRangeDeg: 180
+  },
+
   /* --------------------------- air density ----------------------------
      Thrust and drag scale with air density, and density falls with
      altitude and rises in cold air. ISA troposphere model, sea-level
