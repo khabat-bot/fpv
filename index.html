@@ -32,8 +32,6 @@
     <div class="row" id="osd-row-alt"><span class="lbl">ALT</span><span class="val" id="osd-alt">0.0 m</span></div>
   </div>
 
-  <canvas id="attitude-graph" class="hidden"></canvas>
-
   <div class="osd osd-bc" id="osd-bc">
     <div class="thr-wrap">
       <div class="thr-bar"><div class="thr-fill" id="thr-fill"></div></div>
@@ -50,6 +48,9 @@
   <button id="btn-settings" class="btn tiny">SETTINGS</button>
   <button id="btn-replay" class="btn tiny">REPLAY</button>
   <button id="btn-mp" class="btn tiny" style="display:none">MULTIPLAYER</button>
+  <!-- Live attitude graph (js/telemetry.js). Lives inside the button
+       column so it always stacks under the buttons, whatever the count. -->
+  <canvas id="attitude-graph" class="hidden"></canvas>
 </div>
 
 <!-- ======================= JOYSTICKS ========================= -->
