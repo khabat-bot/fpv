@@ -62,6 +62,11 @@ Camera is a clean 3D render + shake; needs to emulate the VTX link.
 Implemented in `js/fpv-feed.js` (SETTINGS → CAMERA: Video Feed, Feed Lag,
 Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
 
+- [ ] Crash severity drives the feed: a light tumble keeps the picture, a hard
+      hit kills the link. Blocked on `Drone.crash()` becoming graded instead of
+      binary (see 3. Physics fidelity — damage model); today every crash shows
+      NO SIGNAL until respawn.
+
 ### 3. Physics fidelity
 
 `js/physics.js` is rate-based (Betaflight-style): great feel, short step from complete.
