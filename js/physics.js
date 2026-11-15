@@ -4,6 +4,11 @@
      • motor desync kicks on rapid throttle changes at high throttle
      • windmill braking at low throttle / high speed
      • ground-effect wobble when close to terrain
+     • motor/ESC lag + rotor inertia (thrust and rate commands ramp)
+     • optional 6-DOF plant: rate error → motor torque → inertia tensor,
+       with gyro drift on the rate estimate (CFG.physics.sixDof)
+     • progressive damage: staged thrust/authority loss, asymmetric thrust
+       from a dead corner, and a tremor that grows with the damage
    ========================================================================= */
 'use strict';
 
@@ -48,8 +53,18 @@ window.Drone = (function () {
     this._sphereScale = 1.0;   /* collision-envelope multiplier — set by Loadout.apply() */
     this._packDeadLatched = false;  /* latches on first cutoff, cleared by reset() */
 
-    /* Graded damage — one broken arm survives the flight, cleared by reset(). */
-    this.damage = { arm: false };
+    /* Motor / ESC state — the rotor does not change speed instantly. */
+    this._thrustState = 0;                     /* N actually produced   */
+    this._rateTarget  = new THREE.Vector3();   /* lagged rate command   */
+    this._gyroBias    = new THREE.Vector3();   /* rad/s — 6-DOF drift   */
+    this._gyroMeas    = new THREE.Vector3();   /* angVel + gyro bias    */
+    this._gyroPhase   = Math.random() * 100;   /* drift re-seeded on reset */
+
+    /* Graded damage — the airframe survives the flight, cleared by reset().
+       stage 0 = clean, 1..N = CFG.crashSeverity.stages; `corner` is the arm
+       whose motor is down (0..3) and drives the asymmetric thrust. */
+    this.damage = { stage: 0, arm: false, corner: 0 };
+    this._dmgCooldown = 0;
     this.crashSeverity = 0;    /* 0..1, set by crash(impactSpeed) */
     this.onDamage = null;      /* main.js hooks a sound/flash onto this */
 
@@ -57,6 +72,25 @@ window.Drone = (function () {
   }
 
   Drone.prototype.getFloorY = function () { return CFG.groundY; };
+
+  /* Air density ratio vs the sea-level standard the model is tuned for.
+     ISA troposphere: p = p0 (1 - 2.25577e-5 h)^5.25588, T = T0 - 0.0065 h,
+     rho = p / (R T). Cold, low air is dense (more thrust); hot, high air is
+     thin (the quad feels gutless, drag drops too). */
+  Drone.prototype._airDensityRatio = function (altitude) {
+    const env = CFG.environment || {};
+    if (env.density === false) return 1.0;
+    const h  = (typeof altitude === 'number' && isFinite(altitude)) ? Math.max(0, altitude) : 0;
+    const p0 = (env.seaLevelPressure != null) ? env.seaLevelPressure : 101325;
+    const tC = (env.tempC != null) ? env.tempC : 15;
+    const t0 = tC + 273.15;
+    const lapse = 1 - 2.25577e-5 * h;
+    if (lapse <= 0) return 0;   /* above the troposphere — no air */
+    const p = p0 * Math.pow(lapse, 5.25588);
+    const t = Math.max(180, t0 - 0.0065 * h);
+    const rho = p / (287.05 * t);
+    return Math.max(0, rho / 1.225);
+  };
 
   /* Return the active preset for the current flightMode.
      Fallback chain: this.flightMode preset → SPORT → empty. */
@@ -89,8 +123,17 @@ window.Drone = (function () {
     this._grounded = false;
     this._groundedTime = 0;
     this._packDeadLatched = false;
+    this.damage.stage = 0;
     this.damage.arm = false;
+    this.damage.corner = 0;
     this.crashSeverity = 0;
+    this._dmgCooldown = 0;
+
+    this._thrustState = 0;
+    this._rateTarget.set(0, 0, 0);
+    this._gyroBias.set(0, 0, 0);
+    this._gyroMeas.set(0, 0, 0);
+    this._gyroPhase = Math.random() * 100;
 
     /* Reset CCD tracking so the first post-respawn collision doesn't
        see a huge "sweep" from the old position. */
@@ -138,14 +181,25 @@ window.Drone = (function () {
       this.crash(spd);
       return 'crash';
     }
-    if (spd >= dmgSpd && !this.damage.arm) {
-      this.damage.arm = true;
-      if (typeof this.onDamage === 'function') {
-        try { this.onDamage(spd); } catch (e) {}
-      }
-      return 'damage';
+    if (spd < dmgSpd) return 'none';
+
+    /* Escalate one stage per hit. Hits inside the cooldown still register
+       as damage but do not stack — otherwise one ground scrape (many
+       contact frames in a row) would total the airframe instantly. */
+    var stages = sev.stages || [];
+    var maxStage = (stages.length > 1) ? stages.length - 1 : 1;
+    var stage = this.damage.stage || 0;
+    if (stage < 1 && this.damage.arm) stage = 1;   /* legacy flag */
+    if ((this._dmgCooldown > 0) || stage >= maxStage) return 'none';
+
+    this.damage.stage = stage + 1;
+    this.damage.arm = true;
+    this.damage.corner = Math.floor(Math.random() * 4);
+    this._dmgCooldown = (sev.damageCooldown != null) ? sev.damageCooldown : 0.35;
+    if (typeof this.onDamage === 'function') {
+      try { this.onDamage(spd, this.damage.stage); } catch (e) {}
     }
-    return 'none';
+    return 'damage';
   };
 
   Drone.prototype.step = function (dt, input) {
@@ -154,6 +208,7 @@ window.Drone = (function () {
     this.throttleIn = thr;
     this._windTime = (this._windTime || 0) + dt;
     this._groundedTime = Math.max(0, (this._groundedTime || 0) - dt);
+    this._dmgCooldown = Math.max(0, (this._dmgCooldown || 0) - dt);
 
     /* ---- ground authority gate -------------------------------------
        Props grinding on the ground produce severe friction torque. The
@@ -198,16 +253,28 @@ window.Drone = (function () {
     }
     const _packDead = this._packDeadLatched && !CFG.infiniteBattery;
     const _vFactor = _packDead ? 0 : Math.min(1.0, Math.pow(_vPerCell / 4.20, 2));
-    /* Damage: one broken arm costs peak thrust until respawn. */
+    /* Air density: thin air at altitude (and hot air) makes less thrust,
+       and drag falls with it too. ISA troposphere, normalised to the
+       sea-level reference the whole flight model is tuned for. */
+    const _rhoRatio = this._airDensityRatio(this.position.y - CFG.groundY);
+    /* ---- progressive damage -----------------------------------------
+       Each stage costs peak thrust and rotational authority, kills part
+       of one motor's share (asymmetry) and adds a tremor. Stage 1 is the
+       old "one broken arm" behaviour. */
     const _dmgCfg = (CFG.crashSeverity) || {};
-    const _armBroken = !!(this.damage && this.damage.arm);
-    const _armThrust = _armBroken
-      ? (_dmgCfg.armThrustScale != null ? _dmgCfg.armThrustScale : 0.80)
-      : 1.0;
-    const _armAuth = _armBroken
-      ? (_dmgCfg.armAuthorityScale != null ? _dmgCfg.armAuthorityScale : 0.85)
-      : 1.0;
-    const _maxThrustNow = CFG.maxThrust * _vFactor * _armThrust;
+    const _stages = _dmgCfg.stages || [];
+    let _stage = (this.damage && typeof this.damage.stage === 'number') ? this.damage.stage : 0;
+    if (_stage < 1 && this.damage && this.damage.arm) _stage = 1;   /* legacy flag */
+    if (_stage < 0) _stage = 0;
+    if (_stages.length && _stage > _stages.length - 1) _stage = _stages.length - 1;
+    const _st = _stages[_stage] || {};
+    const _armThrust = (_st.thrustScale != null) ? _st.thrustScale : 1.0;
+    const _armAuth   = (_st.authorityScale != null) ? _st.authorityScale : 1.0;
+    const _asym      = (_stage > 0 && _st.asymmetry != null) ? _st.asymmetry : 0;
+    /* A dead motor only carries its own corner's share of the thrust:
+       3 of 4 motors still running costs a quarter of that share. */
+    const _maxThrustNow = CFG.maxThrust * _vFactor * _rhoRatio
+                        * _armThrust * (1 - _asym * 0.25);
     /* Rotation authority scales with pack voltage — real motors produce
        no torque when dead. Zero at cutoff, tapers below 4.0 V/cell. */
     const _authVolt = _vFactor;
@@ -325,13 +392,73 @@ window.Drone = (function () {
       this._target.set(-pRate, -yRate, -rRate);
     }
 
-    const a = this._accel
-      .copy(this._target)
-      .sub(this.angVel)
-      .multiplyScalar(1 / CFG.angResponse);
+    /* ---- rotor inertia on the rate loop -----------------------------
+       A commanded rate is not a rate: the motors need tens of ms to change
+       RPM, so the body rate ramps into the target instead of jumping. */
+    const _rateLag = (CFG.esc && CFG.esc.rateLag > 0) ? CFG.esc.rateLag : 0;
+    if (_rateLag > 0) {
+      this._rateTarget.lerp(this._target, 1 - Math.exp(-dt / _rateLag));
+    } else {
+      this._rateTarget.copy(this._target);
+    }
 
-    const aLen = a.length();
-    if (aLen > CFG.angAccelMax) a.multiplyScalar(CFG.angAccelMax / aLen);
+    /* ---- rate loop: rate targets (RATE) or torque + inertia (6-DOF) ---
+       RATE is the Betaflight-style model: the error against the rate target
+       becomes angular acceleration directly. 6-DOF goes one level down the
+       stack: the same error becomes a MOTOR TORQUE (N·m), which is applied
+       to the body inertia tensor, and a gyro bias drifts the realised rate
+       away from the commanded one. Same stick feel, real rotors under it. */
+    const _six = !!(CFG.physics && CFG.physics.sixDof);
+    const a = this._accel;
+    if (_six) {
+      const _pc = CFG.physics || {};
+      const _I  = _pc.inertia || {};
+      const _Ix = (_I.roll  != null) ? _I.roll  : 0.0042;   /* body X (roll)  */
+      const _Iy = (_I.pitch != null) ? _I.pitch : 0.0056;   /* body Y (pitch) */
+      const _Iz = (_I.yaw   != null) ? _I.yaw   : 0.0085;   /* body Z (yaw)   */
+      /* Gyro bias: the FC reads a slowly wandering offset, so it stops
+         correcting while the airframe is still rotating. Slow wander
+         (20-30 s periods) rather than noise — the drift is something you
+         fly against, and its phase is re-seeded on every respawn. */
+      const _gd = (_pc.gyroDrift != null) ? _pc.gyroDrift : 0;
+      if (_gd > 0) {
+        const _gt = (this._windTime || 0) + (this._gyroPhase || 0);
+        this._gyroBias.set(
+          Math.sin(_gt * 0.31) * _gd,
+          Math.sin(_gt * 0.23 + 2.1) * _gd * 0.8,
+          Math.sin(_gt * 0.19 + 4.2) * _gd * 0.6
+        );
+      } else {
+        this._gyroBias.set(0, 0, 0);
+      }
+      const _meas = this._gyroMeas.copy(this.angVel).add(this._gyroBias);
+      const _ex = this._rateTarget.x - _meas.x;
+      const _ey = this._rateTarget.y - _meas.y;
+      const _ez = this._rateTarget.z - _meas.z;
+      /* Torque for that error, calibrated against the reference inertia so
+         the sticks feel the same as RATE; the real tensor then decides how
+         fast each axis actually spins (yaw is slowest). */
+      const _Iref = (_pc.torqueRef != null) ? _pc.torqueRef : _Ix;
+      const _kt = _Iref / Math.max(1e-4, CFG.angResponse);
+      let _tx = _ex * _kt, _ty = _ey * _kt, _tz = _ez * _kt;
+      const _tMax = (_pc.maxTorque != null) ? _pc.maxTorque : 0.9;
+      const _tLen = Math.sqrt(_tx * _tx + _ty * _ty + _tz * _tz);
+      if (_tLen > _tMax && _tLen > 1e-9) {
+        const _ts = _tMax / _tLen;
+        _tx *= _ts; _ty *= _ts; _tz *= _ts;
+      }
+      a.set(_tx / _Ix, _ty / _Iy, _tz / _Iz);
+      const _aLenSix = a.length();
+      if (_aLenSix > CFG.angAccelMax && _aLenSix > 1e-9) {
+        a.multiplyScalar(CFG.angAccelMax / _aLenSix);
+      }
+    } else {
+      a.copy(this._rateTarget)
+        .sub(this.angVel)
+        .multiplyScalar(1 / CFG.angResponse);
+      const aLen = a.length();
+      if (aLen > CFG.angAccelMax) a.multiplyScalar(CFG.angAccelMax / aLen);
+    }
 
     const dThr = thr - this._prevThrottle;
     this._prevThrottle = thr;
@@ -364,6 +491,30 @@ window.Drone = (function () {
       a.z += (Math.random() - 0.5) * eff * 80;
     }
 
+    /* ---- damage: lopsided thrust + airframe tremor -------------------
+       With a motor down, the opposite corner still pulls: the airframe
+       rolls/pitches toward the dead arm, and the controller can only hold
+       an offset against it. The tremor grows with the damage stage. */
+    if (_stage > 0 && !_wasGrounded && !_packDead) {
+      if (_asym > 0) {
+        const _corner = (this.damage && typeof this.damage.corner === 'number')
+          ? this.damage.corner : 0;
+        const _sx = (_corner === 0 || _corner === 2) ? 1 : -1;   /* body X */
+        const _sz = (_corner < 2) ? 1 : -1;                      /* body Z */
+        const _bg = (_dmgCfg.asymGain != null) ? _dmgCfg.asymGain : 20;
+        a.x += -_sz * _asym * _bg;
+        a.z +=  _sx * _asym * _bg;
+      }
+      const _wob = (_st.wobble != null) ? _st.wobble : 0;
+      if (_wob > 0) {
+        const _wf = (_dmgCfg.wobbleFreq != null) ? _dmgCfg.wobbleFreq : 9;
+        const _wa = ((_dmgCfg.wobbleAccel != null) ? _dmgCfg.wobbleAccel : 14) * _wob;
+        const _wt = this._windTime * Math.PI * 2 * _wf;
+        a.x += Math.sin(_wt) * _wa;
+        a.z += Math.sin(_wt * 1.37 + 1.1) * _wa * 0.8;
+      }
+    }
+
     this.angVel.addScaledVector(a, dt);
 
     const wLen = this.angVel.length();
@@ -378,6 +529,7 @@ window.Drone = (function () {
     this._up.set(0, 1, 0).applyQuaternion(this.quat);
 
     const acc = this._accel;
+    let thrustCmd = 0;   /* newtons the motors are being asked for */
     if (easyActive) {
       /* ===== EASY MODE — altitude hold =============================
          Throttle = climb-rate command:
@@ -414,10 +566,7 @@ window.Drone = (function () {
       /* Voltage-aware cap: hover needs ~20% of peak thrust, so it still
          works even on a nearly-dead pack. Fast climbs / steep dives
          lose their extra punch. */
-      const effThrust = _stalledEasy ? 0 : Math.max(0, Math.min(_maxThrustNow, thrustNeeded));
-
-      acc.copy(this._up).multiplyScalar(effThrust / CFG.mass);
-      acc.y -= CFG.gravity;
+      thrustCmd = _stalledEasy ? 0 : Math.max(0, Math.min(_maxThrustNow, thrustNeeded));
     } else {
       /* ===== ACRO MODE ================================================ */
       /* Motor stall: props jammed against ground when inverted. */
@@ -425,9 +574,35 @@ window.Drone = (function () {
       const _effThr = _stalledAcro ? 0 : thr;
       /* Full stick on a drained pack produces less thrust than full
          stick on a fresh pack — matches real sag behaviour. */
-      acc.copy(this._up).multiplyScalar(_effThr * _maxThrustNow / CFG.mass);
-      acc.y -= CFG.gravity;
+      thrustCmd = _effThr * _maxThrustNow;
     }
+
+    /* ===== ESC + rotor inertia ======================================
+       Thrust follows the command with a first-order lag: the rotor has to
+       spin up (motor torque) and spins down slower (props windmilling).
+       This is why a punch-out ramps instead of teleporting, and why a hard
+       throttle chop still carries you up for a moment. Steady state is
+       unchanged, so hover trim is unaffected. */
+    const _escCfg = CFG.esc || {};
+    const _tgtThrust = _packDead ? 0 : thrustCmd;
+    const _tauEsc = (_tgtThrust > this._thrustState)
+      ? (_escCfg.spinUp != null ? _escCfg.spinUp : 0.032)
+      : (_escCfg.spinDown != null ? _escCfg.spinDown : 0.070);
+    if (_tauEsc > 0) {
+      this._thrustState += (_tgtThrust - this._thrustState) * (1 - Math.exp(-dt / _tauEsc));
+    } else {
+      this._thrustState = _tgtThrust;
+    }
+    /* A damaged airframe shakes under its own thrust. */
+    let _thrustOut = this._thrustState;
+    const _wobThr = (_st.wobble != null) ? _st.wobble : 0;
+    if (_stage > 0 && _wobThr > 0 && !_wasGrounded) {
+      const _tf = (_dmgCfg.wobbleFreq != null) ? _dmgCfg.wobbleFreq : 9;
+      const _ta = ((_dmgCfg.wobbleThrust != null) ? _dmgCfg.wobbleThrust : 0.05) * _wobThr;
+      _thrustOut *= 1 + Math.sin(this._windTime * Math.PI * 2 * _tf * 1.7) * _ta;
+    }
+    acc.copy(this._up).multiplyScalar(_thrustOut / CFG.mass);
+    acc.y -= CFG.gravity;
 
     /* ===== wind ====================================================
        Applied uniformly in both flight modes. Horizontal push makes
@@ -454,7 +629,7 @@ window.Drone = (function () {
 
     const speed = this.velocity.length();
     if (speed > 1e-5) {
-      const k = CFG.dragLinear + CFG.dragQuadratic * speed;
+      const k = (CFG.dragLinear + CFG.dragQuadratic * speed) * _rhoRatio;
       acc.addScaledVector(this.velocity, -k);
     }
 
@@ -464,7 +639,7 @@ window.Drone = (function () {
        to fight the controller and slow commanded descents. */
     if (!easyActive && thr < 0.15 && speed > 3) {
       const wmCoeff = CFG.windmillBrake != null ? CFG.windmillBrake : 0.15;
-      const windmill = (1 - thr / 0.15) * wmCoeff;
+      const windmill = (1 - thr / 0.15) * wmCoeff * _rhoRatio;
       acc.addScaledVector(this.velocity, -windmill);
     }
 
