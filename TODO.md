@@ -81,10 +81,9 @@ Camera is a clean 3D render + shake; needs to emulate the VTX link.
 Implemented in `js/fpv-feed.js` (SETTINGS → CAMERA: Video Feed, Feed Lag,
 Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
 
-- [ ] Crash severity drives the feed: a light tumble keeps the picture, a hard
-      hit kills the link. Blocked on `Drone.crash()` becoming graded instead of
-      binary (see 3. Physics fidelity — damage model); today every crash shows
-      NO SIGNAL until respawn.
+- [x] Crash severity drives the feed: a light tumble keeps the picture, a hard
+      hit kills the link. `Drone.crash(impactSpeed)` records a 0-1 severity and
+      `Drone.impact()` grades every collision path (see 3. Physics fidelity).
 
 ### 4. Physics fidelity
 
@@ -93,8 +92,12 @@ Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
 - [ ] Motor/ESC response lag and rotor inertia (rate ramps, not instant)
 - [ ] Full 6-DOF option: torque + inertia tensor instead of rate targets, gyro drift
 - [ ] Air density / temperature effects on thrust
-- [ ] Damage model: `Drone.crash()` is binary (js/physics.js:102) — broken arm,
-      reduced thrust, prop-strike sounds before the crash
+- [x] Damage model: impacts are graded. `Drone.impact()` breaks an arm above
+      `CFG.crashSeverity.damageSpeed` (reduced thrust + authority, prop-strike
+      sound, ARMED · DMG in the OSD) and crashes above `CFG.crashSpeed`, with a
+      0-1 severity driving the video feed
+- [ ] Damage beyond one arm: multiple stages, asymmetric thrust, wobble that
+      grows with damage
 
 ### 5. Content library
 

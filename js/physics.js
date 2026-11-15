@@ -48,6 +48,11 @@ window.Drone = (function () {
     this._sphereScale = 1.0;   /* collision-envelope multiplier — set by Loadout.apply() */
     this._packDeadLatched = false;  /* latches on first cutoff, cleared by reset() */
 
+    /* Graded damage — one broken arm survives the flight, cleared by reset(). */
+    this.damage = { arm: false };
+    this.crashSeverity = 0;    /* 0..1, set by crash(impactSpeed) */
+    this.onDamage = null;      /* main.js hooks a sound/flash onto this */
+
     this.reset(0, 0);
   }
 
@@ -84,6 +89,8 @@ window.Drone = (function () {
     this._grounded = false;
     this._groundedTime = 0;
     this._packDeadLatched = false;
+    this.damage.arm = false;
+    this.crashSeverity = 0;
 
     /* Reset CCD tracking so the first post-respawn collision doesn't
        see a huge "sweep" from the old position. */
@@ -99,10 +106,46 @@ window.Drone = (function () {
     if (!this.armed) this.angVel.set(0, 0, 0);
   };
 
-  Drone.prototype.crash = function () {
+  /* Grade the hit so the rest of the sim can react to how hard it was.
+     Between crashSpeed and fatalSpeed the airframe is wrecked but the VTX
+     is assumed to survive; at/above fatalSpeed the video feed dies with it. */
+  Drone.prototype.crash = function (impactSpeed) {
     if (this.crashed) return;
     this.crashed = true;
     this.armed = false;
+
+    var sev = (window.CFG && CFG.crashSeverity) || {};
+    var base = (CFG.crashSpeed != null) ? CFG.crashSpeed : 7.0;
+    var fatal = (sev.fatalSpeed != null) ? sev.fatalSpeed : 15.0;
+    var s = 0;
+    if (typeof impactSpeed === 'number' && isFinite(impactSpeed) && impactSpeed > base) {
+      s = (impactSpeed - base) / Math.max(0.1, fatal - base);
+    }
+    this.crashSeverity = Math.max(0, Math.min(1, s));
+  };
+
+  /* Single entry point for every collision path: nothing, a broken arm
+     (keep flying), or a crash. Speeds are pre-impulse approach speeds in
+     m/s, so the thresholds mean what they say. */
+  Drone.prototype.impact = function (speed, depth) {
+    var sev = (window.CFG && CFG.crashSeverity) || {};
+    var spd = (typeof speed === 'number' && isFinite(speed)) ? speed : 0;
+    var pen = (typeof depth === 'number' && isFinite(depth)) ? depth : 0;
+    var crashSpd = (CFG.crashSpeed != null) ? CFG.crashSpeed : 7.0;
+    var dmgSpd = (sev.damageSpeed != null) ? sev.damageSpeed : 4.5;
+
+    if (spd > crashSpd || pen > (CFG.depthCrash || 1.5)) {
+      this.crash(spd);
+      return 'crash';
+    }
+    if (spd >= dmgSpd && !this.damage.arm) {
+      this.damage.arm = true;
+      if (typeof this.onDamage === 'function') {
+        try { this.onDamage(spd); } catch (e) {}
+      }
+      return 'damage';
+    }
+    return 'none';
   };
 
   Drone.prototype.step = function (dt, input) {
@@ -155,7 +198,16 @@ window.Drone = (function () {
     }
     const _packDead = this._packDeadLatched && !CFG.infiniteBattery;
     const _vFactor = _packDead ? 0 : Math.min(1.0, Math.pow(_vPerCell / 4.20, 2));
-    const _maxThrustNow = CFG.maxThrust * _vFactor;
+    /* Damage: one broken arm costs peak thrust until respawn. */
+    const _dmgCfg = (CFG.crashSeverity) || {};
+    const _armBroken = !!(this.damage && this.damage.arm);
+    const _armThrust = _armBroken
+      ? (_dmgCfg.armThrustScale != null ? _dmgCfg.armThrustScale : 0.80)
+      : 1.0;
+    const _armAuth = _armBroken
+      ? (_dmgCfg.armAuthorityScale != null ? _dmgCfg.armAuthorityScale : 0.85)
+      : 1.0;
+    const _maxThrustNow = CFG.maxThrust * _vFactor * _armThrust;
     /* Rotation authority scales with pack voltage — real motors produce
        no torque when dead. Zero at cutoff, tapers below 4.0 V/cell. */
     const _authVolt = _vFactor;
@@ -165,8 +217,8 @@ window.Drone = (function () {
        coupling to stick throttle would be wrong). See
        CFG.feel.motorAuthority for tunables. */
     const _mA = (CFG.feel && CFG.feel.motorAuthority) || { rollPitch: 1.0, yaw: 1.0 };
-    const _authRP  = _mA.rollPitch + (1 - _mA.rollPitch) * thr;
-    const _authYaw = _mA.yaw       + (1 - _mA.yaw)       * thr;
+    const _authRP  = (_mA.rollPitch + (1 - _mA.rollPitch) * thr) * _armAuth;
+    const _authYaw = (_mA.yaw       + (1 - _mA.yaw)       * thr) * _armAuth;
 
     const e = CFG.expo;
     const easyActive = !!(this.easyMode && this.armed);
@@ -990,13 +1042,8 @@ Drone.prototype._collideBVHOnce = function() {
   }
 
   /* ---- Crash check (pre-impulse approach speed) ---- */
-  if (this.armed) {
-    var cfg = (window.CFG) || (typeof CFG !== 'undefined' ? CFG : {}) || {};
-    var crashSpd = cfg.crashSpeed || 7.0;
-    var hitSpd   = cfg.hitSpeed   || 6.0;
-    if ((anyUpwardNormal && maxApproach > crashSpd) || maxApproach > hitSpd) {
-      if (typeof this.crash === 'function') this.crash();
-    }
+  if (this.armed && typeof this.impact === 'function') {
+    this.impact(maxApproach);
   }
 
   /* ---- Safety cap: prevent runaway spin from extreme contacts ---- */
@@ -1041,9 +1088,7 @@ Drone.prototype._collide = function() {
       this._grounded = true;
       this._groundedTime = 0.15;
 
-      if (this.armed && (vyImpact > CFG.crashSpeed || depth > (CFG.depthCrash || 1.5))) {
-        this.crash();
-      }
+      if (this.armed) this.impact(vyImpact, depth);
     }
 
     const cols = this.colliderIndex
@@ -1087,7 +1132,7 @@ Drone.prototype._collide = function() {
           this.angVel.y += Math.sign(_ay) * Math.min(6.0, _tangSpeed * 0.5);
         }
       }
-      if (this.armed && -vn > CFG.hitSpeed) this.crash();
+      if (this.armed) this.impact(-vn);
     }
   };
 
@@ -1112,7 +1157,7 @@ Drone.prototype._collide = function() {
           this.velocity.z *= 0.85;
           this._grounded = true;
           this._groundedTime = 0.15;
-          if (this.armed && impact > CFG.crashSpeed) this.crash();
+          if (this.armed) this.impact(impact);
         }
       }
       return;
@@ -1145,7 +1190,7 @@ Drone.prototype._collide = function() {
           this.angVel.y += Math.sign(_ay) * Math.min(6.0, _tangSpeed * 0.5);
         }
       }
-      if (this.armed && -vn > CFG.hitSpeed) this.crash();
+      if (this.armed) this.impact(-vn);
     }
   };
 

@@ -114,8 +114,9 @@ function setStickVisible(v) {
     drawStickHUD(state);
 
     /* ---------------------- telemetry ---------------------- */
-    el.arm.textContent = drone.armed ? 'ARMED' : 'DISARMED';
-    el.arm.style.color = drone.armed ? '#8dffb0' : '#ff9d9d';
+    var _armDmg = !!(drone.damage && drone.damage.arm);
+    el.arm.textContent = drone.armed ? (_armDmg ? 'ARMED \u00b7 DMG' : 'ARMED') : 'DISARMED';
+    el.arm.style.color = drone.armed ? (_armDmg ? '#ffd479' : '#8dffb0') : '#ff9d9d';
 
     el.volt.textContent = drone.voltage.toFixed(1) + 'V';
     el.mah.textContent  = Math.round(drone.mahUsed) + 'mAh';
@@ -136,20 +137,22 @@ function setStickVisible(v) {
     }
   }
 
-  function showCrash(show) {
+  /* A hard crash usually kills the VTX (ejected pack, torn antenna) and the
+     goggles show static; a soft one leaves the link up and you just see the
+     wreck. `severity` is 0..1 from Drone.crash() — 0.5 and up is a dead VTX. */
+  function showCrash(show, severity) {
     el.crash.classList.toggle('hidden', !show);
-    /* A hard crash usually kills the VTX (ejected pack, torn antenna), so
-       the goggles show static instead of a clean view of the wreck. The
-       respawn panel doubles as the NO SIGNAL card while the feed is off. */
     var feedOn = !!(window.FPVFeed && FPVFeed.isEnabled && FPVFeed.isEnabled());
-    if (window.FPVFeed && FPVFeed.setFeedLost) FPVFeed.setFeedLost(!!show && feedOn);
+    var sev = (typeof severity === 'number' && isFinite(severity)) ? severity : 1;
+    var noSignal = !!show && feedOn && sev >= 0.5;
+    if (window.FPVFeed && FPVFeed.setFeedLost) FPVFeed.setFeedLost(noSignal);
     var title = el.crash.querySelector('.crash-title');
     var sub = el.crash.querySelector('.crash-sub');
-    if (title) title.textContent = (show && feedOn) ? 'NO SIGNAL' : 'CRASHED';
+    if (title) title.textContent = noSignal ? 'NO SIGNAL' : 'CRASHED';
     if (sub) {
-      sub.textContent = (show && feedOn)
+      sub.textContent = noSignal
         ? 'video link lost \u00b7 respawn to re-arm'
-        : 'tap respawn to try again';
+        : 'airframe wrecked \u00b7 respawn to re-arm';
     }
   }
 

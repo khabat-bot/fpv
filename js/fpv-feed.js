@@ -226,8 +226,16 @@ window.FPVFeed = (function () {
     if (!rendererRef) rendererRef = renderer;
     ensureRenderTarget(renderer);
 
+    /* renderer.info is reset by every render() call, so the composite pass
+       would leave the FPS overlay reporting "1 dc / 2 tri". Capture the
+       scene totals and fold the quad back in at the end. */
+    var info = renderer.info.render;
+    var sceneCalls = 0, sceneTris = 0;
+
     renderer.setRenderTarget(rt);
     renderer.render(scene, camera);
+    sceneCalls = info.calls;
+    sceneTris = info.triangles;
     renderer.setRenderTarget(null);
 
     var now = performance.now() / 1000;
@@ -241,6 +249,9 @@ window.FPVFeed = (function () {
     u.uLens.value = lensOn ? 1 : 0;
 
     renderer.render(quadScene, quadCam);
+
+    info.calls = sceneCalls + info.calls;
+    info.triangles = sceneTris + info.triangles;
   }
 
   /* --------------------------- pose buffer ---------------------------- */
@@ -376,7 +387,14 @@ window.FPVFeed = (function () {
         _ray.near = 0.3;
         _ray.far = len - 0.3;
         var hits = bvh.raycast(_ray.ray, THREE.DoubleSide);
-        return !!(hits && hits.length);
+        /* MeshBVH.raycast takes a raw Ray, which has no near/far — filter the
+           hits ourselves, otherwise geometry BEHIND the ground station counts
+           as an obstruction. */
+        if (!hits || !hits.length) return false;
+        for (var hi = 0; hi < hits.length; hi++) {
+          if (hits[hi] && hits[hi].distance <= len - 0.3) return true;
+        }
+        return false;
       } catch (e) {
         /* fall through to the analytic path */
       }

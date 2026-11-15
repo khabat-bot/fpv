@@ -416,6 +416,33 @@ window.SimAudio = (function () {
   }
 
   /* 0..1 video link quality. 1 = clean picture, 0 = dead link. */
+  /* Short prop-strike crunch — one rotor gone, not the whole airframe. */
+  function damageSound() {
+    if (!ctx || muted) return;
+    const len = Math.floor(ctx.sampleRate * 0.16);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const env = Math.exp(-i / (len * 0.10));
+      d[i] = (Math.random() * 2 - 1) * env * env;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 1100;
+    f.Q.value = 0.9;
+
+    const g = ctx.createGain();
+    g.gain.value = 0.42;
+
+    src.connect(f);
+    f.connect(g);
+    g.connect(linkGain);
+    src.start();
+  }
+
   function setLink(q) {
     var n = Number(q);
     linkQuality = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
@@ -448,6 +475,7 @@ window.SimAudio = (function () {
     update: update,
     armBeep: armBeep,
     crashSound: crashSound,
+    damageSound: damageSound,
     setLink: setLink,
     setMuted: setMuted,
     isMuted: isMuted,
