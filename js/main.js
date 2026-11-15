@@ -20,7 +20,8 @@
     { name: 'World',    src: 'js/world.js',         ready: () => !!window.World },
     { name: 'Drone',    src: 'js/physics.js',       ready: () => typeof window.Drone === 'function' },
     { name: 'Input',    src: 'js/input.js',         ready: () => !!window.Input },
-    { name: 'HUD',      src: 'js/hud.js',           ready: () => !!window.HUD }
+    { name: 'HUD',      src: 'js/hud.js',           ready: () => !!window.HUD },
+    { name: 'FPVFeed',  src: 'js/fpv-feed.js',      ready: () => !!window.FPVFeed }
   ];
 
   function missingDependencies() {
@@ -83,6 +84,7 @@
     powerPreference: 'high-performance'
   });
   renderer.setPixelRatio(Math.min(dpr, QUALITY[qualityName].dpr));
+  if (window.FPVFeed) FPVFeed.init(renderer);
 
   function setDPRCap(cap) {
     const next = Math.min(window.devicePixelRatio || 1, cap);
@@ -279,6 +281,7 @@ git
     if (vfov < 58) vfov = 58;
     camera.fov = vfov;
     camera.updateProjectionMatrix();
+    if (window.FPVFeed) FPVFeed.resize();
     Input.resize();
   }
   window.addEventListener('resize', resize);
@@ -1212,6 +1215,10 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     camTilt: 24,
     wind: 'CALM',
     shake: 'LOW',
+    feedOn: true,
+    feedLatency: 50,
+    feedLink: true,
+    feedLens: true,
     chaseDist: 'MID',
     tab: 'GENERAL',
     flightMode: 'ACRO',
@@ -1254,6 +1261,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         if (typeof s.shake === 'string'
             && ['OFF','LOW','MED','HIGH'].indexOf(s.shake) !== -1) {
           settings.shake = s.shake;
+        }
+        if (typeof s.feedOn === 'boolean') settings.feedOn = s.feedOn;
+        if (typeof s.feedLink === 'boolean') settings.feedLink = s.feedLink;
+        if (typeof s.feedLens === 'boolean') settings.feedLens = s.feedLens;
+        if (typeof s.feedLatency === 'number'
+            && [0, 50, 75, 100].indexOf(s.feedLatency) !== -1) {
+          settings.feedLatency = s.feedLatency;
         }
         if (typeof s.chaseDist === 'string'
             && ['NEAR','MID','FAR'].indexOf(s.chaseDist) !== -1) {
@@ -1364,6 +1378,15 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       ? SHAKE_LEVELS[settings.shake]
       : SHAKE_LEVELS.LOW;
   }
+  function applyFeed() {
+    if (!window.FPVFeed) return;
+    FPVFeed.configure({
+      enabled: !!settings.feedOn,
+      latencyMs: settings.feedLatency | 0,
+      link: !!settings.feedLink,
+      lens: !!settings.feedLens
+    });
+  }
   const CHASE_DIST = { NEAR: 0.5, MID: 1.0, FAR: 1.8 };
   let chaseDist = CHASE_DIST.MID;
   function applyChaseDist() {
@@ -1458,6 +1481,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     applyCamTilt();
     applyWind();
     applyShake();
+    applyFeed();
     applyChaseDist();
     applyEnv(settings.env || 'DAY');
     wireDisplayShell();
@@ -1532,6 +1556,18 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         } else if (setting === 'shake') {
           settings.shake = val;
           applyShake();
+        } else if (setting === 'feed') {
+          settings.feedOn = (val === 'ON');
+          applyFeed();
+        } else if (setting === 'feedLatency') {
+          settings.feedLatency = parseInt(val, 10) || 0;
+          applyFeed();
+        } else if (setting === 'feedLink') {
+          settings.feedLink = (val === 'ON');
+          applyFeed();
+        } else if (setting === 'feedLens') {
+          settings.feedLens = (val === 'ON');
+          applyFeed();
         } else if (setting === 'chaseDist') {
           settings.chaseDist = val;
           applyChaseDist();
@@ -1584,6 +1620,10 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
           else if (setting === 'camTilt') active = (parseInt(val, 10) === settings.camTilt);
           else if (setting === 'wind') active = (val === settings.wind);
           else if (setting === 'shake') active = (val === settings.shake);
+          else if (setting === 'feed') active = ((val === 'ON') === !!settings.feedOn);
+          else if (setting === 'feedLatency') active = (parseInt(val, 10) === settings.feedLatency);
+          else if (setting === 'feedLink') active = ((val === 'ON') === !!settings.feedLink);
+          else if (setting === 'feedLens') active = ((val === 'ON') === !!settings.feedLens);
           else if (setting === 'chaseDist') active = (val === settings.chaseDist);
           else if (setting === 'env') active = (val === settings.env);
           else if (setting === 'batteryMode') active = (val === settings.batteryMode);
@@ -2332,6 +2372,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       }
     }
 
+    /* FPV feed — pose latency + link quality for the goggles picture. */
+    if (window.FPVFeed) FPVFeed.frame(dt, now, camera, cameraMode, drone, world);
+
     if (world.sky) world.sky.position.copy(camera.position);
     if (world.ground) {
       const TILE = world.groundTile || 20;
@@ -2347,6 +2390,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     if (!replayActive && window.GhostTrail) GhostTrail.update(drone);
 
     if (window.SimAudio && typeof SimAudio.update === 'function') {
+      /* Goggles audio rides the video link: mute the mic and fade in
+         receiver hiss as the picture dies (control link is unaffected). */
+      if (SimAudio.setLink) {
+        SimAudio.setLink((window.FPVFeed && FPVFeed.wantsPost())
+          ? FPVFeed.getSignal()
+          : 1);
+      }
       SimAudio.update(viewDrone, hudStick, camera);
     }
 
@@ -2365,7 +2415,8 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       updateArmButton();
     }
 
-    renderer.render(scene, camera);
+    if (window.FPVFeed && FPVFeed.wantsPost()) FPVFeed.render(renderer, scene, camera);
+    else renderer.render(scene, camera);
     updateFPS(dt);
   }
 
