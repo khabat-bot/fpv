@@ -12,33 +12,52 @@
 Mobile-first: iOS Safari is the primary target. Priorities 1-4 below are what a
 player on an iPhone feels in the first session; do them before the content work.
 
-### 1. iOS touch-first playability (felt immediately)
+### 1. iOS touch-first playability (felt immediately) — done
 
-The page loads, but there is no game shell around the canvas on iOS. Nothing in
-`js/` or `css/` handles any of the following (`grep` for fullscreen / WakeLock /
-visibilitychange / pointerrawupdate finds nothing):
+The page loads, but the game shell around the canvas on iOS was incomplete.
+All of the shell helpers now live in `js/lifecycle.js` as `window.IOS` and
+are wired from `js/main.js`.
 
-- [ ] Fullscreen + landscape lock (Screen Orientation API / Fullscreen API,
-      with a fallback rotate-your-phone overlay in portrait) — otherwise the
-      attempt-to-scroll address bar eats vertical space and taps can zoom
-- [ ] Screen Wake Lock (`navigator.wakeLock`) so the display doesn't dim mid-flight
-- [ ] Disable double-tap zoom / pinch on the stick area — current guard in
-      `Input.installIOSGuards()` kills the *second* `touchend` within 350 ms,
-      which also eats fast touch-release-again stick input (`js/input.js:47`)
-- [ ] Pause + resume audio and freeze the sim on `visibilitychange`
-      (currently a lock-screen/background tab keeps the game loop running,
-      and `SimAudio` may be suspended without anything noticing)
-- [ ] Replace 120/240 Hz tuning with `maxTouchPoints`/device-class detection and
-      avoid the iPhone 60 Hz display oversampling the physics loop
-- [ ] Cap `devicePixelRatio` for render resolution — HIGH dpr = 2.0 is the
-      default on desktop, MED on mobile, but there is no cap for iPhone 3x
-      screens (the main cause of iOS heat/throttle)
-- [ ] `-webkit-fill-available` + `100dvh` for the viewport so the canvas doesn't
-      jump when the Safari toolbar collapses (CSS currently uses safe-area
-      insets only)
-- [ ] WebAudio unlock on the first user gesture already exists in `input.js`,
-      but `SimAudio` never resumes after the iOS silent switch or a call — add
-      vendor interruption handling (`AudioContext.onstatechange`)
+- [x] Keep screen awake, always on, no setting. Wake lock is requested on
+      load and re-requested on every return to the tab, released only while
+      hidden. iOS Safari has no `navigator.wakeLock`; there the user must set
+      Settings > Display > Auto-Lock > Never. Android and desktop Chrome/Edge
+      hold the lock automatically. An earlier SETTINGS "KEEP AWAKE" toggle
+      was removed.
+- [x] Pause on background. The loop keeps its rAF handle armed but `frame()`
+      returns early while paused, before physics, input, net, replay, audio,
+      and render. On return `dt` is recomputed from that frame, so the quad
+      never jumps or teleports.
+- [x] Audio suspension on hide (`SimAudio.suspend()`), restoring on return.
+      No `AudioContext.resume()` is attempted from the handler because iOS
+      rejects it outside a gesture; the next stick/key touch does it via
+      `resumeAudio()` in `js/input.js`.
+- [x] Stick-area double-tap guard is stick-aware: the 350 ms second-`touchend`
+      cancel in `Input.installIOSGuards()` is skipped when the tap lands on
+      `#stick-left`/`#stick-right`, so a quick release-and-regrip no longer
+      kills the stick. Double-tap zoom is still cancelled everywhere else.
+- [x] Rotate hint: `#rotate-hint` is shown via `body.portrait` only for
+      portrait, touch devices (not iPad landscape, not a narrow desktop
+      window). It is purely visual (`pointer-events: none`) and disappears in
+      landscape.
+- [x] Viewport height (`--vh`) is driven from `visualViewport`, so the
+      floating Safari toolbar does not leave a black strip or jump the
+      canvas.
+- [x] Fullscreen is manual only: a SETTINGS > GENERAL > Display button using
+      the standard plus webkit-prefixed APIs (Android / desktop). It never
+      fires automatically on load. iOS Safari tabs have no element
+      fullscreen, so the button is labelled FULLSCREEN N/A there. Landscape
+      lock cannot be forced in a Safari tab; the rotate hint is the
+      substitute.
+
+Still open in this area:
+
+- [ ] Physics rate is sized from the real display refresh rate instead of a
+      fixed 120 Hz on mobile (a 60 Hz iPhone serves twice as many substeps
+      as it can draw).
+- [ ] Render DPR cap resolves against the actual backing-store ratio rather
+      than `devicePixelRatio` (iPhone 3x renders 2x on HIGH; cheap phones
+      warm up).
 
 ### 2. Real RC controller support
 
@@ -49,7 +68,7 @@ No gamepad/Bluetooth/USB input exists yet; only keyboard + virtual sticks.
 - [ ] Channel order, stick travel, deadband settings
 - [ ] Failsafe behavior on dropped link (controlled drop-out, not instant crash)
 
-### 2. FPV video feed realism
+### 3. FPV video feed realism
 
 Camera is a clean 3D render + shake; needs to emulate the VTX link.
 
@@ -59,7 +78,7 @@ Camera is a clean 3D render + shake; needs to emulate the VTX link.
 - [ ] Signal-loss screen tied to distance/obstructions (BVH raycast to map)
 - [ ] Optional lens distortion / color-grade pass
 
-### 3. Physics fidelity
+### 4. Physics fidelity
 
 `js/physics.js` is rate-based (Betaflight-style): great feel, short step from complete.
 
@@ -69,7 +88,7 @@ Camera is a clean 3D render + shake; needs to emulate the VTX link.
 - [ ] Damage model: `Drone.crash()` is binary (js/physics.js:102) — broken arm,
       reduced thrust, prop-strike sounds before the crash
 
-### 4. Content library
+### 5. Content library
 
 Only one procedural world ships; the GLB importer (`js/loader.js`) is ready.
 
@@ -78,7 +97,7 @@ Only one procedural world ships; the GLB importer (`js/loader.js`) is ready.
 - [ ] Time attack with splits (racing.js has laps, no splits yet)
 - [ ] Persistent best times / leaderboard
 
-### 5. Multiplayer hardening
+### 6. Multiplayer hardening
 
 The server is a dumb non-authoritative relay.
 
@@ -86,13 +105,13 @@ The server is a dumb non-authoritative relay.
 - [ ] Anti-cheat sanity checks on state deltas (rate limit exists,
       plausibility checks don't)
 
-### 6. Telemetry & analysis
+### 7. Telemetry & analysis
 
 - [ ] Live attitude graph (pitch/roll/yaw over time)
 - [ ] Blackbox-style CSV export of per-axis data (replay export exists,
       but as a recording file, not structured data)
 
-### 7. Engineering
+### 8. Engineering
 
 - [ ] Unit tests + CI: physics, net protocol, loadout math
       (no tests exist at all)

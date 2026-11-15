@@ -27,8 +27,28 @@
     return doc.hidden || doc.visibilityState === 'hidden';
   }
 
-  doc.addEventListener('visibilitychange', function () { setPaused(hidden()); });
-  window.addEventListener('pagehide', function () { setPaused(true); });
+  /* Ask the wake-lock owner to drop (false) or re-acquire (true) the lock.
+     Safe to call before lifecycle.js's tail has installed IOS.Screen: the
+     Screen module is appended to the same IIFE below and every handler here
+     runs from an event, never during load. */
+  function notify(awake) {
+    const s = window.IOS && window.IOS.Screen;
+    if (!s) return;
+    if (awake) { s.wakeOn(); }
+    else if (s.wakeOff) s.wakeOff();
+  }
+
+  /* Hidden -> paused; the sim's own rAF handler stops stepping. Visible
+     again -> resume and re-acquire the screen lock (mobile browsers drop
+     it on every tab switch, so re-requesting is unconditional). */
+  doc.addEventListener('visibilitychange', function () {
+    if (hidden()) { setPaused(true); notify(false); }
+    else { setPaused(false); notify(true); }
+  });
+  window.addEventListener('pagehide', function () {
+    setPaused(true);
+    notify(false);
+  });
   window.addEventListener('pageshow', function () { setPaused(hidden()); });
 
   window.IOS = window.IOS || {};
@@ -46,7 +66,9 @@ function ScreenModule(doc, body) {
   function isPortraitPhone() {
     const portrait = window.innerHeight >= window.innerWidth;
     const narrow = Math.min(window.innerWidth, window.innerHeight) < 600;
-    return portrait && narrow;
+    const touch = (navigator.maxTouchPoints || 0) > 0 ||
+      window.matchMedia('(pointer: coarse)').matches;
+    return portrait && narrow && touch;
   }
 
   function applyViewportHeight() {
@@ -59,20 +81,24 @@ function ScreenModule(doc, body) {
     applyViewportHeight();
     body.classList.toggle('portrait', isPortraitPhone());
   }
-  /* Wake lock: keeps the screen on during flight. Resolves to null when
-     the platform has no Screen Wake Lock API (older iOS) or refuses
-     because the tab is not visible; every failure is silent by design. */
+  /* Wake lock: always on, no setting.
+     iOS Safari has no `navigator.wakeLock`, so there the only options are
+     the OS setting (Settings > Display & Brightness > Auto-Lock > Never)
+     or a Shortcut that the app can launch via the `shortcuts://` URL.
+     state().supported tells the UI whether to show that note. */
   let wakeLock = null;
 
   function wakeOn() {
-    if (!navigator.wakeLock || wakeLock) return;
     if (doc.hidden) return;
+    if (!navigator.wakeLock) return;
+    if (wakeLock) return;
     navigator.wakeLock.request('screen').then(function (lock) {
       wakeLock = lock;
       lock.addEventListener('release', function () { wakeLock = null; });
     }).catch(function () { wakeLock = null; });
   }
 
+  /* Release only while actually hidden; the next visible frame re-requests. */
   function wakeOff() {
     const lock = wakeLock;
     wakeLock = null;
@@ -80,9 +106,13 @@ function ScreenModule(doc, body) {
       try { lock.release(); } catch (err) { /* already released */ }
     }
   }
+
+  function wakeSupported() { return !!navigator.wakeLock; }
+  function state() { return { supported: wakeSupported() }; }
   return {
     init: function () {
       refresh();
+      wakeOn();
       window.addEventListener('resize', refresh);
       window.addEventListener('orientationchange', function () { setTimeout(refresh, 250); });
       if (window.visualViewport) window.visualViewport.addEventListener('resize', applyViewportHeight);
@@ -90,6 +120,7 @@ function ScreenModule(doc, body) {
     refresh: refresh,
     isPortraitPhone: isPortraitPhone,
     applyViewportHeight: applyViewportHeight,
+    state: state,
     wakeOn: wakeOn,
     wakeOff: wakeOff
   };

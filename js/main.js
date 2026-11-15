@@ -405,7 +405,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     btnSound.classList.toggle('on', !next);
   });
   btnSound.classList.add('on');
-  
+
   /* ---- Replay panel ---- */
   var btnReplay = document.getElementById('btn-replay');
   var replayPanel = document.getElementById('replay-panel');
@@ -1460,6 +1460,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     applyShake();
     applyChaseDist();
     applyEnv(settings.env || 'DAY');
+    wireDisplayShell();
   }
 
   function showDrillMetrics(m) {
@@ -2110,12 +2111,11 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   })();
 
 
-/* ===== display shell wiring (settings Fullscreen button + rotate note) ===== */
-function wireDisplayShell() {
+  /* ===== display shell wiring: settings Fullscreen button (manual only) ===== */
+  function wireDisplayShell() {
   if (!window.IOS) return;
   const $ = function (id) { return document.getElementById(id); };
   const btn = $('btn-fullscreen');
-  const note = $('rotate-note');
 
   function syncBtn() {
     if (!btn) return;
@@ -2129,7 +2129,6 @@ function wireDisplayShell() {
       btn.textContent = 'FULLSCREEN N/A';
       btn.disabled = true;
     }
-    if (note) note.classList.add('hidden');
   }
 
   if (btn && IOS.Fullscreen.isSupported()) {
@@ -2144,13 +2143,23 @@ function wireDisplayShell() {
   });
 
   IOS.Lifecycle.onResume(function () {
+    syncBtn();
     if (IOS.Fullscreen.isActive()) IOS.Screen.wakeOn();
   });
 
-  wireDisplayShell();
-
   syncBtn();
 }
+
+  /* When backgrounded, also silence the audio graph (without touching the
+     user's SND flag) so iOS does not keep a live context behind the app. */
+  if (window.IOS && IOS.Lifecycle) {
+    IOS.Lifecycle.onPause(function () {
+      if (window.SimAudio && SimAudio.suspend) SimAudio.suspend();
+    });
+    /* No audio hook: iOS rejects AudioContext.resume() outside a user
+       gesture registration. The next stick/key touch calls resumeAudio(). */
+  }
+
   /* ============================ main loop ============================= */
   const PHYSICS_HZ = isMobile ? 120 : 240;
   const FIXED = 1 / PHYSICS_HZ;
@@ -2166,14 +2175,12 @@ function wireDisplayShell() {
 
     let dt = (now - lastTime) / 1000;
     lastTime = now;
-    /* A hidden iOS tab stops firing rAF and returns with a huge dt; drop it
-       entirely while paused instead of clamping, so the quad does not jump. */
-    if (window.IOS && IOS.Lifecycle && IOS.Lifecycle.paused) dt = 0;
+    /* Backgrounded tab: dt includes however long we were hidden. Discard it
+       and keep rendering nothing. The loop was already re-queued above, so
+       the sim is frozen, not stopped. */
+    if (window.IOS && IOS.Lifecycle && IOS.Lifecycle.paused) return;
     if (dt > 0.1) dt = 0.1;
     if (dt < 0) dt = 0;
-    /* Skip the sim, audio and render work while paused; the next visible
-       frame resumes from here with dt already zeroed above. */
-    if (dt === 0) return;
 
     const state = Input.update(dt);
 

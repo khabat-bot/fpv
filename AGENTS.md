@@ -48,6 +48,7 @@ js/parts.js  → PARTS, Loadout
 js/drills.js → Drills
 js/replay-store.js → ReplayStore  (IndexedDB library)
 js/replay.js → Replay        (recorder + preview playback)
+js/lifecycle.js → IOS        (tab pause/resume, wake lock, --vh, fullscreen, portrait flag)
 js/main.js   (bootstrap + game loop; loads LAST)
 ```
 
@@ -98,6 +99,19 @@ made in both files to keep them in sync.**
 - **Never name a global `Audio`**: `window.Audio` is the browser's built-in
   media constructor. That's why the sound module is `SimAudio` and input.js
   guards `window.Audio` references before calling.
+- **Backgrounding / screen sleep**: `js/lifecycle.js` owns this. `frame()`
+  returns early while hidden (loop stays armed via its top-of-function
+  `requestAnimationFrame`), so do not add work before that guard. The screen
+  wake lock is always on, no setting; it can only work where
+  `navigator.wakeLock` exists (Android/desktop Chrome/Edge), never in an iOS
+  Safari tab, so on iPhone the user must set Settings > Display >
+  Auto-Lock > Never. Do not call `AudioContext.resume()` from the visibility
+  handler: iOS rejects it outside a user gesture, so audio resumes on the next
+  stick/key touch (`resumeAudio()` in input.js).
+- **`body.portrait`** is set by `lifecycle.js` only for touch devices narrower
+  than 600 CSS px. It drives the rotate overlay (`#rotate-hint`), which is
+  `pointer-events: none` so it can never eat a stick press. Landscape lock
+  cannot be forced inside a Safari tab.
 - **`css/tokens.css` is orphaned** — it is not referenced from index.html or
   style.css (style.css has its own `:root`). Editing it changes nothing.
 - **Racing only works on the procedural world**: `racing.js` activates only when

@@ -390,6 +390,18 @@ window.SimAudio = (function () {
   }
 
   function isMuted() { return muted; }
+  /* Force the WebAudio graph silent without changing the user-facing
+     mute flag, so a resumed tab can restore their own SND setting. */
+  function suspend() {
+    if (!ctx) return;
+    try { ctx.suspend(); } catch (err) { /* ignore */ }
+  }
+
+  function unsuspend() {
+    if (!ctx) return;
+    try { ctx.resume(); } catch (err) { /* ignore */ }
+  }
+
 
   return {
     init: init,
@@ -398,6 +410,8 @@ window.SimAudio = (function () {
     armBeep: armBeep,
     crashSound: crashSound,
     setMuted: setMuted,
-    isMuted: isMuted
+    isMuted: isMuted,
+    suspend: suspend,
+    unsuspend: unsuspend
   };
 })();
