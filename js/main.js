@@ -1346,7 +1346,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     var tl = document.querySelector('.osd-tl');
     if (tl) {
       var anyVisible = tl.querySelector('.row:not(.hud-off)');
-      tl.classList.toggle('hud-off', !anyVisible);
+      var graphOn = !!(window.Telemetry && Telemetry.isGraphVisible
+        && Telemetry.isGraphVisible());
+      tl.classList.toggle('hud-off', !anyVisible && !graphOn);
       /* Ghost trail visibility */
       if (window.GhostTrail) GhostTrail.setVisible(!!settings.hud.ghostTrail);
     }
@@ -1404,9 +1406,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     });
   }
   function applyTelemetry() {
-    if (window.Telemetry && Telemetry.setGraphVisible) {
-      Telemetry.setGraphVisible(!!settings.telemGraph);
-    }
+    if (!window.Telemetry) return;
+    if (Telemetry.setGraphVisible) Telemetry.setGraphVisible(!!settings.telemGraph);
+    /* The graph lives in the OSD panel, which auto-hides when every row in
+       it is hidden — re-run that now that the graph state changed, then give
+       the canvas its backing store once the panel has a size. */
+    applyHudVisibility();
+    if (Telemetry.resize) Telemetry.resize();
   }
   const CHASE_DIST = { NEAR: 0.5, MID: 1.0, FAR: 1.8 };
   let chaseDist = CHASE_DIST.MID;

@@ -30,6 +30,9 @@
     <div class="row" id="osd-row-time"><span class="lbl">TIME</span><span class="val" id="osd-timer">00:00</span></div>
     <div class="row" id="osd-row-spd"><span class="lbl">SPD</span><span class="val" id="osd-speed">0 km/h</span></div>
     <div class="row" id="osd-row-alt"><span class="lbl">ALT</span><span class="val" id="osd-alt">0.0 m</span></div>
+    <!-- Live attitude graph (js/telemetry.js). A child of the OSD panel, so
+         it can never cover the buttons or a stick. -->
+    <canvas id="attitude-graph" class="hidden"></canvas>
   </div>
 
   <div class="osd osd-bc" id="osd-bc">
@@ -48,9 +51,6 @@
   <button id="btn-settings" class="btn tiny">SETTINGS</button>
   <button id="btn-replay" class="btn tiny">REPLAY</button>
   <button id="btn-mp" class="btn tiny" style="display:none">MULTIPLAYER</button>
-  <!-- Live attitude graph (js/telemetry.js). Lives inside the button
-       column so it always stacks under the buttons, whatever the count. -->
-  <canvas id="attitude-graph" class="hidden"></canvas>
 </div>
 
 <!-- ======================= JOYSTICKS ========================= -->

@@ -928,7 +928,7 @@ body.feed-lost #drill-metrics {
 /* Auto-hide the panel when every .row inside is .hud-off.
    :has() is supported on iOS 16.4+ — belt-and-braces with JS fallback
    in applyHudVisibility(). */
-.osd-tl:not(:has(.row:not(.hud-off))) {
+.osd-tl:not(:has(.row:not(.hud-off))):not(:has(#attitude-graph:not(.hidden))) {
   display: none !important;
 }
 
@@ -2057,14 +2057,15 @@ body.portrait #rotate-hint {
 /* ==========================================================================
    TELEMETRY — live attitude graph + blackbox export (js/telemetry.js)
    ========================================================================== */
-/* Sits in the #buttons flex column (top-right) as its last item, so the
-   buttons never cover it. Display-only: never captures a touch. */
+/* Last child of the OSD top-left panel, so it can never cover the button
+   column or an on-screen stick — the panel grows to the graph's width.
+   Display-only: never captures a touch. */
 #attitude-graph {
-  flex: none;
-  align-self: flex-end;
-  margin-top: 2px;
-  width: 168px;
-  height: 84px;
+  display: block;
+  width: 156px;
+  height: 78px;
+  margin: 6px 0 1px;
+  background: rgba(4, 10, 18, 0.35);
   pointer-events: none;
   border-radius: 8px;
   border: 1px solid rgba(140, 200, 255, 0.16);
@@ -2076,7 +2077,13 @@ body.portrait #rotate-hint {
 #attitude-graph.hidden { display: none; }
 
 @media (max-width: 600px) {
-  #attitude-graph { width: 124px; height: 66px; }
+  #attitude-graph { width: 116px; height: 58px; }
+}
+
+/* Short landscape screens (iPhone SE class): the on-screen sticks start
+   higher up, so the graph has to stay above them. */
+@media (max-height: 420px) {
+  #attitude-graph { height: 46px; }
 }
 
 .telem-status {
