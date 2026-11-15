@@ -141,11 +141,33 @@ The server is a dumb non-authoritative relay.
 - [ ] Anti-cheat sanity checks on state deltas (rate limit exists,
       plausibility checks don't)
 
-### 7. Telemetry & analysis
+### 7. Telemetry & analysis — done
 
-- [ ] Live attitude graph (pitch/roll/yaw over time)
-- [ ] Blackbox-style CSV export of per-axis data (replay export exists,
+Implemented in `js/telemetry.js` (SETTINGS → TELEM). A sampling loop in
+`frame()` reads the published sim state into a rolling 60 s buffer at 50 Hz
+(`CFG.telemetry`); the buffer is written only while the quad is armed (the
+crash frame that disarms it is kept) and is cleared on every arm, so one
+log is one flight and disarmed bench time never pushes the flight out.
+
+- [x] Live attitude graph (pitch/roll/yaw over time)
+      `#attitude-graph` is an OSD canvas with three lanes — roll, pitch and
+      yaw — redrawn at 20 Hz from the same buffer, scrolling over the last
+      10 s at ±180° full scale. Yaw is wrapped into ±180° for the trace, so
+      a multi-turn flight stays on the lane. Toggle it under SETTINGS →
+      TELEM.
+      Attitude comes from the quaternion: pitch/roll from a YXZ
+      decomposition (pitch + = nose up, roll + = bank right) and heading
+      from swing-twist, unwrapped so it grows past ±180° through turns —
+      the decomposition the angle controller already documents as the only
+      correct way to recover yaw from a tilted airframe.
+- [x] Blackbox-style CSV export of per-axis data (replay export exists,
       but as a recording file, not structured data)
+      EXPORT CSV writes `fpv-blackbox-<timestamp>.csv`: one header row and
+      one row per sample with `time_ms`, throttle, stick commands, realised
+      gyro rates, rate setpoints, attitude, altitude, vertical/ground speed,
+      thrust, pack voltage/current/mAh and damage stage. Body axes are
+      mapped to roll/pitch/yaw names (X = pitch, Y = yaw, Z = roll in this
+      flight model) so the columns read like a real blackbox.
 
 ### 8. Engineering
 

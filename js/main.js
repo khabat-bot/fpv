@@ -21,6 +21,7 @@
     { name: 'Drone',    src: 'js/physics.js',       ready: () => typeof window.Drone === 'function' },
     { name: 'Input',    src: 'js/input.js',         ready: () => !!window.Input },
     { name: 'HUD',      src: 'js/hud.js',           ready: () => !!window.HUD },
+    { name: 'Telemetry', src: 'js/telemetry.js',    ready: () => !!window.Telemetry },
     { name: 'FPVFeed',  src: 'js/fpv-feed.js',      ready: () => !!window.FPVFeed }
   ];
 
@@ -255,6 +256,7 @@ git
   /* --------------------------- input / hud / racing ------------------ */
   Input.init();
   HUD.init();
+  if (window.Telemetry) Telemetry.init();
 
   /* --------------------------- camera rig ---------------------------- */
   const _camTiltAxis = new THREE.Vector3(1, 0, 0);
@@ -289,6 +291,7 @@ git
     camera.updateProjectionMatrix();
     if (window.FPVFeed) FPVFeed.resize();
     Input.resize();
+    if (window.Telemetry) Telemetry.resize();
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 250));
@@ -1231,6 +1234,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     env: 'DAY',
     batteryMode: 'REAL',
     physics: 'RATE',
+    telemGraph: false,
     loadout: {
       frame:   'freestyle_5',
       motors:  'default_2207',
@@ -1281,9 +1285,10 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
           settings.chaseDist = s.chaseDist;
         }
         if (typeof s.tab === 'string'
-            && ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD'].indexOf(s.tab) !== -1) {
+            && ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD','TELEM'].indexOf(s.tab) !== -1) {
           settings.tab = s.tab;
         }
+        if (typeof s.telemGraph === 'boolean') settings.telemGraph = s.telemGraph;
         var VALID_MODES = { ACRO:1, SLOW:1, SPORT:1, FAST:1 };
         if (typeof s.flightMode === 'string' && VALID_MODES[s.flightMode]) {
           settings.flightMode = s.flightMode;
@@ -1341,7 +1346,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     var tl = document.querySelector('.osd-tl');
     if (tl) {
       var anyVisible = tl.querySelector('.row:not(.hud-off)');
-      tl.classList.toggle('hud-off', !anyVisible);
+      var graphOn = !!(window.Telemetry && Telemetry.isGraphVisible
+        && Telemetry.isGraphVisible());
+      tl.classList.toggle('hud-off', !anyVisible && !graphOn);
       /* Ghost trail visibility */
       if (window.GhostTrail) GhostTrail.setVisible(!!settings.hud.ghostTrail);
     }
@@ -1397,6 +1404,15 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       link: !!settings.feedLink,
       lens: !!settings.feedLens
     });
+  }
+  function applyTelemetry() {
+    if (!window.Telemetry) return;
+    if (Telemetry.setGraphVisible) Telemetry.setGraphVisible(!!settings.telemGraph);
+    /* The graph lives in the OSD panel, which auto-hides when every row in
+       it is hidden — re-run that now that the graph state changed, then give
+       the canvas its backing store once the panel has a size. */
+    applyHudVisibility();
+    if (Telemetry.resize) Telemetry.resize();
   }
   const CHASE_DIST = { NEAR: 0.5, MID: 1.0, FAR: 1.8 };
   let chaseDist = CHASE_DIST.MID;
@@ -1476,7 +1492,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   function applySettingsTab(name) {
     const panel = document.getElementById('settings-panel');
     if (!panel) return;
-    const valid = ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD'];
+    const valid = ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD','TELEM'];
     const tabName = (valid.indexOf(name) !== -1) ? name : 'GENERAL';
     panel.querySelectorAll('.sp-tab').forEach(function (t) {
       t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
@@ -1501,6 +1517,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     applyWind();
     applyShake();
     applyFeed();
+    applyTelemetry();
     applyChaseDist();
     applyEnv(settings.env || 'DAY');
     wireDisplayShell();
@@ -1587,6 +1604,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         } else if (setting === 'feedLens') {
           settings.feedLens = (val === 'ON');
           applyFeed();
+        } else if (setting === 'telemGraph') {
+          settings.telemGraph = (val === 'ON');
+          applyTelemetry();
         } else if (setting === 'chaseDist') {
           settings.chaseDist = val;
           applyChaseDist();
@@ -1646,6 +1666,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
           else if (setting === 'feedLatency') active = (parseInt(val, 10) === settings.feedLatency);
           else if (setting === 'feedLink') active = ((val === 'ON') === !!settings.feedLink);
           else if (setting === 'feedLens') active = ((val === 'ON') === !!settings.feedLens);
+          else if (setting === 'telemGraph') active = ((val === 'ON') === !!settings.telemGraph);
           else if (setting === 'chaseDist') active = (val === settings.chaseDist);
           else if (setting === 'env') active = (val === settings.env);
           else if (setting === 'batteryMode') active = (val === settings.batteryMode);
@@ -1663,6 +1684,20 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         row.classList.toggle('sp-on', !!settings.hud[key]);
       });
       updateLoadoutSummary();
+      updateTelemetryStatus();
+    }
+
+    function updateTelemetryStatus() {
+      var el = document.getElementById('telem-status');
+      if (!el) return;
+      var T = window.Telemetry;
+      var n = (T && T.sampleCount) ? T.sampleCount() : 0;
+      if (!n) {
+        el.textContent = 'NO DATA \u00b7 ARM TO RECORD';
+        return;
+      }
+      var secs = (T.duration ? T.duration() : 0) / 1000;
+      el.textContent = n + ' SAMPLES \u00b7 ' + secs.toFixed(1) + 's \u00b7 CSV';
     }
 
     function updateLoadoutSummary() {
@@ -1678,6 +1713,16 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (rateEl)  rateEl.textContent  = Math.round(e.maxRates.roll) + '/s';
       if (cellsEl) cellsEl.textContent = e.battery.cells + 'S ' + e.battery.capacityMah + 'mAh';
     }
+
+    var telemExport = panel.querySelector('#telem-export');
+    if (telemExport) telemExport.addEventListener('click', function () {
+      if (window.Telemetry && Telemetry.exportCSV()) refreshSegmented();
+    });
+    var telemClear = panel.querySelector('#telem-clear');
+    if (telemClear) telemClear.addEventListener('click', function () {
+      if (window.Telemetry) Telemetry.clear();
+      refreshSegmented();
+    });
 
     panel.querySelectorAll('.sp-tab').forEach(function (t) {
       t.addEventListener('click', function () {
@@ -2408,6 +2453,11 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     const hudStick = replayStick || state;
     HUD.update(viewDrone, camera, flightTime, hudStick.throttle, hudStick);
     if (window.HUD && HUD.setStickOverride) HUD.setStickOverride(replayStick);
+
+    /* Blackbox + attitude graph — live flight only. While a replay is
+       previewing the live sim is frozen, so sampling it would just log a
+       frozen pose into the next flight's log. */
+    if (!previewWasActive && window.Telemetry) Telemetry.sample(drone, state, dt);
 
     /* Update ghost trail (only for the live drone) */
     if (!replayActive && window.GhostTrail) GhostTrail.update(drone);

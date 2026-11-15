@@ -30,6 +30,9 @@
     <div class="row" id="osd-row-time"><span class="lbl">TIME</span><span class="val" id="osd-timer">00:00</span></div>
     <div class="row" id="osd-row-spd"><span class="lbl">SPD</span><span class="val" id="osd-speed">0 km/h</span></div>
     <div class="row" id="osd-row-alt"><span class="lbl">ALT</span><span class="val" id="osd-alt">0.0 m</span></div>
+    <!-- Live attitude graph (js/telemetry.js). A child of the OSD panel, so
+         it can never cover the buttons or a stick. -->
+    <canvas id="attitude-graph" class="hidden"></canvas>
   </div>
 
   <div class="osd osd-bc" id="osd-bc">
@@ -95,6 +98,7 @@
       <button class="sp-tab" data-tab="FLIGHT">FLIGHT</button>
       <button class="sp-tab" data-tab="LOADOUT">LOADOUT</button>
       <button class="sp-tab" data-tab="HUD">HUD</button>
+      <button class="sp-tab" data-tab="TELEM">TELEM</button>
     </div>
     <div class="sp-pane active" data-pane="GENERAL">
       <div class="sp-row">
@@ -347,6 +351,24 @@
       <div class="sp-row" data-toggle="thr">Throttle Bar</div>
       <div class="sp-row" data-toggle="ghostTrail">Ghost Trail</div>
     </div>
+    <div class="sp-pane" data-pane="TELEM">
+      <div class="sp-row">
+        <span class="sp-lbl">Attitude Graph</span>
+        <div class="sp-group" data-setting="telemGraph">
+          <button class="sp-opt" data-val="ON">ON</button>
+          <button class="sp-opt" data-val="OFF">OFF</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Blackbox</span>
+        <div class="sp-group">
+          <button id="telem-export" class="sp-opt">EXPORT CSV</button>
+          <button id="telem-clear" class="sp-opt">CLEAR</button>
+        </div>
+      </div>
+      <div id="telem-status" class="telem-status">NO DATA &#183; ARM TO RECORD</div>
+      <div class="telem-hint">Logs the last 60 s of armed flight at 50 Hz. The CSV has per-axis stick commands, gyro rates, rate setpoints, attitude, altitude/speed, thrust, pack and damage state — one row per sample.</div>
+    </div>
   </div>
 </div>
 
@@ -488,6 +510,7 @@
 <script src="js/drills.js"></script>
 <script src="js/replay-store.js"></script>
 <script src="js/replay.js"></script>
+<script src="js/telemetry.js"></script>
 <script src="js/lifecycle.js"></script>
 <script src="js/main.js"></script>
 
