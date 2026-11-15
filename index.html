@@ -63,6 +63,11 @@
 <!-- ======================= CRASH OVERLAY ===================== -->
 <div id="vignette"></div>
 
+<!-- ======================= FPV LINK LOSS ===================== -->
+<div id="fpv-no-signal" class="hidden">
+  <div class="fpv-ns-text">NO SIGNAL</div>
+</div>
+
 <div id="crash" class="hidden">
   <div class="crash-title">CRASHED</div>
   <div class="crash-sub">tap respawn to try again</div>
@@ -186,6 +191,36 @@
           <button class="sp-opt" data-val="LOW">LOW</button>
           <button class="sp-opt" data-val="MED">MED</button>
           <button class="sp-opt" data-val="HIGH">HIGH</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Video Feed</span>
+        <div class="sp-group" data-setting="feed">
+          <button class="sp-opt" data-val="ON">ON</button>
+          <button class="sp-opt" data-val="OFF">OFF</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Feed Lag</span>
+        <div class="sp-group" data-setting="feedLatency">
+          <button class="sp-opt" data-val="0">0ms</button>
+          <button class="sp-opt" data-val="50">50ms</button>
+          <button class="sp-opt" data-val="75">75ms</button>
+          <button class="sp-opt" data-val="100">100ms</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Link Sim</span>
+        <div class="sp-group" data-setting="feedLink">
+          <button class="sp-opt" data-val="ON">ON</button>
+          <button class="sp-opt" data-val="OFF">OFF</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Lens</span>
+        <div class="sp-group" data-setting="feedLens">
+          <button class="sp-opt" data-val="ON">ON</button>
+          <button class="sp-opt" data-val="OFF">OFF</button>
         </div>
       </div>
     </div>
@@ -445,6 +480,7 @@
 <script src="js/loader.js"></script>
 <script src="js/net.js"></script>
 <script src="js/mp.js"></script>
+<script src="js/fpv-feed.js"></script>
 <script src="js/parts.js"></script>
 <script src="js/drills.js"></script>
 <script src="js/replay-store.js"></script>

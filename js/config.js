@@ -67,6 +67,25 @@ window.CFG = {
     tiltDeg: 24
   },
 
+  /* --------------------------- FPV video feed -------------------------- */
+  /* Emulates the VTX/goggles link (js/fpv-feed.js).
+     - latencyMs: how far behind the sim the picture runs
+     - fullSignalRange / maxRange: metres for a clean / dead picture
+     - obstructionAttenuation: how much solid geometry eats the link (0-1)
+     - raycastHz: obstruction sampling rate (kept low to stay cheap)
+     - signalSmoothMs: link quality smoothing time constant
+     - lossThreshold / lossHoldMs: when the snow screen takes over */
+  fpvFeed: {
+    latencyMs: 50,
+    fullSignalRange: 260,
+    maxRange: 900,
+    obstructionAttenuation: 0.8,
+    raycastHz: 8,
+    signalSmoothMs: 220,
+    lossThreshold: 0.12,
+    lossHoldMs: 350
+  },
+
   /* -------------------------- environment ------------------------------ */
   /* Sky / fog / lighting presets. DAY reproduces the procedural-world
      defaults exactly (byte-identical look). On imported maps, the DAY

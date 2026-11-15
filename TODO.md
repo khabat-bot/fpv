@@ -53,11 +53,14 @@ No gamepad/Bluetooth/USB input exists yet; only keyboard + virtual sticks.
 
 Camera is a clean 3D render + shake; needs to emulate the VTX link.
 
-- [ ] Configurable feed latency (50-100 ms) with a buffered pose buffer
+- [x] Configurable feed latency (50-100 ms) with a buffered pose buffer
       (same interpolation trick as `js/mp.js` uses for remote drones)
-- [ ] Noise/static on weak signal, artifact bursts
-- [ ] Signal-loss screen tied to distance/obstructions (BVH raycast to map)
-- [ ] Optional lens distortion / color-grade pass
+- [x] Noise/static on weak signal, artifact bursts
+- [x] Signal-loss screen tied to distance/obstructions (BVH raycast to map)
+- [x] Optional lens distortion / color-grade pass
+
+Implemented in `js/fpv-feed.js` (SETTINGS → CAMERA: Video Feed, Feed Lag,
+Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
 
 ### 3. Physics fidelity
 

@@ -416,6 +416,48 @@ body {
 }
 body.gfx-low #vignette { opacity: 0; }
 
+/* --------------------------- FPV link loss ---------------------------- */
+#fpv-no-signal {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.035) 0px,
+    rgba(255, 255, 255, 0.035) 1px,
+    rgba(0, 0, 0, 0.10) 2px,
+    rgba(0, 0, 0, 0.10) 4px);
+  animation: fpv-static-flicker 0.18s steps(2, end) infinite;
+}
+#fpv-no-signal.hidden { display: none; }
+#fpv-no-signal .fpv-ns-text {
+  font-family: inherit;
+  font-size: clamp(18px, 5vw, 34px);
+  letter-spacing: 0.32em;
+  text-indent: 0.32em;
+  padding: 10px 22px;
+  color: #f4f8ff;
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 6px;
+  text-shadow: 0 0 12px rgba(0, 0, 0, 0.95),
+               2px 0 rgba(255, 0, 60, 0.55),
+               -2px 0 rgba(0, 120, 255, 0.55);
+  animation: fpv-ns-blink 1.4s steps(2, end) infinite;
+}
+@keyframes fpv-ns-blink {
+  0%, 65%   { opacity: 1; }
+  66%, 100% { opacity: 0.55; }
+}
+@keyframes fpv-static-flicker {
+  0%   { opacity: 1; }
+  100% { opacity: 0.82; }
+}
+
 /* ------------------------ vertical button stack ----------------------- */
 #buttons {
   display: flex !important;
