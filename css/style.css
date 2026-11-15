@@ -287,6 +287,8 @@ body {
   touch-action: none;
 }
 #crash.hidden { display: none; }
+/* A crashed feed is snow, not a red-tinted scene — keep the backdrop neutral. */
+body.feed-lost #crash { background: rgba(0, 0, 0, 0.30); }
 .crash-title {
   font-size: clamp(22px, 6vw, 34px);
   letter-spacing: 0.22em;
@@ -415,6 +417,16 @@ body {
   transition: opacity 0.3s;
 }
 body.gfx-low #vignette { opacity: 0; }
+
+/* The OSD is part of the video: it goes away with the picture. The virtual
+   sticks and the button column are the pilot, so they stay. */
+body.feed-lost #hud .osd,
+body.feed-lost #crosshair,
+body.feed-lost #stick-hud-canvas,
+body.feed-lost #drill-metrics {
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+}
 
 /* --------------------------- FPV link loss ---------------------------- */
 #fpv-no-signal {

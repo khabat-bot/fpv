@@ -138,6 +138,19 @@ function setStickVisible(v) {
 
   function showCrash(show) {
     el.crash.classList.toggle('hidden', !show);
+    /* A hard crash usually kills the VTX (ejected pack, torn antenna), so
+       the goggles show static instead of a clean view of the wreck. The
+       respawn panel doubles as the NO SIGNAL card while the feed is off. */
+    var feedOn = !!(window.FPVFeed && FPVFeed.isEnabled && FPVFeed.isEnabled());
+    if (window.FPVFeed && FPVFeed.setFeedLost) FPVFeed.setFeedLost(!!show && feedOn);
+    var title = el.crash.querySelector('.crash-title');
+    var sub = el.crash.querySelector('.crash-sub');
+    if (title) title.textContent = (show && feedOn) ? 'NO SIGNAL' : 'CRASHED';
+    if (sub) {
+      sub.textContent = (show && feedOn)
+        ? 'video link lost \u00b7 respawn to re-arm'
+        : 'tap respawn to try again';
+    }
   }
 
   return { init: init, update: update, showCrash: showCrash, setStickOverride: setStickOverride, resizeStickHUD: resizeStickHUD, setStickVisible: setStickVisible };

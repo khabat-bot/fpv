@@ -7,6 +7,12 @@ window.SimAudio = (function () {
 
   let ctx = null;
   let master = null;
+  /* Everything the quad's microphone picks up travels over the VTX, so
+     linkGain sits between the sim sounds and master. When the video link
+     degrades the mic audio fades out and receiver hiss fades in. */
+  let linkGain = null;
+  let hissGain = null;
+  let linkQuality = 1;
 
   let motorOsc1, motorOsc2, motorFilter, motorGain;
   let windGain, windFilter;
@@ -40,6 +46,10 @@ window.SimAudio = (function () {
     master.gain.value = muted ? 0 : 0.28;
     master.connect(ctx.destination);
 
+    linkGain = ctx.createGain();
+    linkGain.gain.value = 1;
+    linkGain.connect(master);
+
     motorOsc1 = ctx.createOscillator();
     motorOsc1.type = 'sawtooth';
     motorOsc1.frequency.value = 70;
@@ -59,7 +69,7 @@ window.SimAudio = (function () {
     motorOsc1.connect(motorFilter);
     motorOsc2.connect(motorFilter);
     motorFilter.connect(motorGain);
-    motorGain.connect(master);
+    motorGain.connect(linkGain);
     motorOsc1.start();
     motorOsc2.start();
 
@@ -82,8 +92,23 @@ window.SimAudio = (function () {
 
     windSrc.connect(windFilter);
     windFilter.connect(windGain);
-    windGain.connect(master);
+    windGain.connect(linkGain);
     windSrc.start();
+
+    /* Receiver hiss — what the goggles actually output once the VTX audio
+       is gone. Silent while the link is healthy. */
+    const hissSrc = ctx.createBufferSource();
+    hissSrc.buffer = buf;
+    hissSrc.loop = true;
+    const hissFilter = ctx.createBiquadFilter();
+    hissFilter.type = 'highpass';
+    hissFilter.frequency.value = 1600;
+    hissGain = ctx.createGain();
+    hissGain.gain.value = 0;
+    hissSrc.connect(hissFilter);
+    hissFilter.connect(hissGain);
+    hissGain.connect(master);
+    hissSrc.start();
 
     const washSrc = ctx.createBufferSource();
     washSrc.buffer = buf;
@@ -99,7 +124,7 @@ window.SimAudio = (function () {
 
     washSrc.connect(washFilter);
     washFilter.connect(washGain);
-    washGain.connect(master);
+    washGain.connect(linkGain);
     washSrc.start();
 
     return true;
@@ -117,6 +142,14 @@ window.SimAudio = (function () {
 
     const t = ctx.currentTime;
     const armed = drone.armed && !drone.crashed;
+
+    /* ---- Video link ----
+       The goggles audio is the quad's mic carried by the VTX, so a dying
+       link mutes the whole quad and fades in receiver hiss. The RC link
+       is separate: control keeps working, you just fly blind. */
+    const micLevel = Math.max(0, Math.min(1, (linkQuality - 0.12) / 0.35));
+    if (linkGain) linkGain.gain.setTargetAtTime(safe(micLevel, 1), t, 0.12);
+    if (hissGain) hissGain.gain.setTargetAtTime(safe((1 - micLevel) * 0.11, 0), t, 0.15);
     /* Pack-dead — latched OR sagged below cutoff. Silences motor
        whine, prop wash, and any thrust-driven sound. */
     const _packDeadAudio = !!drone._packDeadLatched
@@ -311,7 +344,7 @@ window.SimAudio = (function () {
           filter.frequency.value = 800;
           osc.connect(filter);
           filter.connect(gain);
-          gain.connect(master);
+          gain.connect(linkGain);
           osc.start();
           remoteAudioNodes[r.pid] = { osc: osc, gain: gain, filter: filter };
         }
@@ -342,7 +375,7 @@ window.SimAudio = (function () {
     g.gain.setValueAtTime(vol || 0.12, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g);
-    g.connect(master);
+    g.connect(linkGain);
     o.start(t);
     o.stop(t + dur + 0.02);
   }
@@ -378,8 +411,14 @@ window.SimAudio = (function () {
 
     src.connect(f);
     f.connect(g);
-    g.connect(master);
+    g.connect(linkGain);
     src.start();
+  }
+
+  /* 0..1 video link quality. 1 = clean picture, 0 = dead link. */
+  function setLink(q) {
+    var n = Number(q);
+    linkQuality = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 1;
   }
 
   function setMuted(m) {
@@ -397,6 +436,7 @@ window.SimAudio = (function () {
     update: update,
     armBeep: armBeep,
     crashSound: crashSound,
+    setLink: setLink,
     setMuted: setMuted,
     isMuted: isMuted
   };

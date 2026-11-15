@@ -2383,6 +2383,13 @@ function wireDisplayShell() {
     if (!replayActive && window.GhostTrail) GhostTrail.update(drone);
 
     if (window.SimAudio && typeof SimAudio.update === 'function') {
+      /* Goggles audio rides the video link: mute the mic and fade in
+         receiver hiss as the picture dies (control link is unaffected). */
+      if (SimAudio.setLink) {
+        SimAudio.setLink((window.FPVFeed && FPVFeed.wantsPost())
+          ? FPVFeed.getSignal()
+          : 1);
+      }
       SimAudio.update(viewDrone, hudStick, camera);
     }
 

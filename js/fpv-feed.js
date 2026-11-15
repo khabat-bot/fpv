@@ -60,6 +60,9 @@ window.FPVFeed = (function () {
   var staticAmt = 0;        // 0..1 full-loss static
   var lossSince = 0;
   var lossShown = false;
+  var osdHidden = false;
+  /* Latched by a crash: the VTX is treated as dead until respawn. */
+  var forcedLoss = false;
 
   var poseBuf = [];
   var MAX_POSE_MS = 600;
@@ -384,12 +387,28 @@ window.FPVFeed = (function () {
     return false;
   }
 
+  function crashPanelVisible() {
+    var el = document.getElementById('crash');
+    return !!(el && !el.classList.contains('hidden'));
+  }
+
   function setLossOverlay(on) {
+    /* The crash panel carries its own NO SIGNAL card — don't stack two. */
+    if (on && crashPanelVisible()) on = false;
     if (on === lossShown) return;
     lossShown = on;
     if (!lossEl) lossEl = document.getElementById('fpv-no-signal');
     if (!lossEl) return;
     lossEl.classList.toggle('hidden', !on);
+  }
+
+  /* The OSD is drawn by the flight controller into the video, so it leaves
+     the screen with the picture. Sticks and buttons are the pilot, not the
+     feed, and stay usable. */
+  function setOsdHidden(on) {
+    if (on === osdHidden) return;
+    osdHidden = on;
+    if (document.body) document.body.classList.toggle('feed-lost', on);
   }
 
   function updateSignal(dt, now, camera, drone, world) {
@@ -432,6 +451,7 @@ window.FPVFeed = (function () {
       staticAmt = Math.max(0, staticAmt - dt * 4);
     }
     setLossOverlay(staticAmt > 0.55);
+    setOsdHidden(staticAmt > 0.35);
   }
 
   /* ------------------------------ frame ------------------------------- */
@@ -449,6 +469,19 @@ window.FPVFeed = (function () {
       blocked = 0;
       artifact = 0;
       if (staticAmt !== 0) { staticAmt = 0; setLossOverlay(false); }
+      return;
+    }
+
+    if (forcedLoss) {
+      signal = 0;
+      targetSignal = 0;
+      artifact = Math.max(artifact, 0.5);
+      staticAmt = Math.min(1, staticAmt + (dt || 0.016) * 8);
+      setLossOverlay(true);
+      setOsdHidden(true);
+      pushPose(now, camera);
+      if (latencyMs > 0) applyDelayedPose(now, camera);
+      postActive = true;
       return;
     }
 
@@ -472,7 +505,21 @@ window.FPVFeed = (function () {
     if (!enabled) reset();
   }
 
+  function setFeedLost(on) {
+    forcedLoss = !!on;
+    if (forcedLoss) {
+      staticAmt = 1;
+      signal = 0;
+      targetSignal = 0;
+      artifact = 0.5;
+      setLossOverlay(true);
+      setOsdHidden(true);
+    }
+  }
+
   function reset() {
+    forcedLoss = false;
+    setOsdHidden(false);
     poseBuf.length = 0;
     signal = 1;
     targetSignal = 1;
@@ -506,9 +553,11 @@ window.FPVFeed = (function () {
     configure: configure,
     resize: resize,
     reset: reset,
+    setFeedLost: setFeedLost,
     /* exposed for the HUD / debugging */
     getSignal: function () { return signal; },
     isEnabled: function () { return enabled; },
+    isFeedLost: function () { return staticAmt > 0.55; },
     getLatency: function () { return latencyMs; }
   };
 })();
