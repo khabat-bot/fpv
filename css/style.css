@@ -437,12 +437,10 @@ body.feed-lost #drill-metrics {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(255, 255, 255, 0.035) 0px,
-    rgba(255, 255, 255, 0.035) 1px,
-    rgba(0, 0, 0, 0.10) 2px,
-    rgba(0, 0, 0, 0.10) 4px);
+  /* No scanline stripes here: the snow itself is drawn by the feed shader
+     (js/fpv-feed.js), and stacking a line pattern over it read as a CRT
+     effect rather than a dead receiver. */
+  background: none;
   animation: fpv-static-flicker 0.18s steps(2, end) infinite;
 }
 #fpv-no-signal.hidden { display: none; }

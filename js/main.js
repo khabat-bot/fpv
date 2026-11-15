@@ -1230,6 +1230,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     flightMode: 'ACRO',
     env: 'DAY',
     batteryMode: 'REAL',
+    physics: 'RATE',
     loadout: {
       frame:   'freestyle_5',
       motors:  'default_2207',
@@ -1297,6 +1298,10 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         if (typeof s.batteryMode === 'string'
             && ['REAL','INFINITE'].indexOf(s.batteryMode) !== -1) {
           settings.batteryMode = s.batteryMode;
+        }
+        if (typeof s.physics === 'string'
+            && ['RATE','6DOF'].indexOf(s.physics) !== -1) {
+          settings.physics = s.physics;
         }
         if (s.loadout && typeof s.loadout === 'object') {
           var P = window.PARTS || {};
@@ -1401,6 +1406,13 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       : CHASE_DIST.MID;
   }
 
+  /* RATE = the Betaflight-style rate loop; 6DOF = torque + inertia tensor
+     with gyro drift (see js/physics.js and CFG.physics). */
+  function applyPhysicsModel() {
+    if (!CFG.physics) CFG.physics = {};
+    CFG.physics.sixDof = (settings.physics === '6DOF');
+  }
+
   function applyBatteryMode() {
     CFG.infiniteBattery = (settings.batteryMode === 'INFINITE');
     if (CFG.infiniteBattery && window.__drone) {
@@ -1480,6 +1492,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     applyFpsCap();
     applyFpsCounter();
     applyEasyMode();
+    applyPhysicsModel();
     applyBatteryMode();
     applyLoadout();
     applyHudVisibility();
@@ -1583,6 +1596,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         } else if (setting === 'batteryMode') {
           settings.batteryMode = val;
           applyBatteryMode();
+        } else if (setting === 'physics') {
+          settings.physics = val;
+          applyPhysicsModel();
         } else if (setting === 'drill') {
         if (window.Drills) {
         if (val === 'none') Drills.end();
@@ -1633,6 +1649,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
           else if (setting === 'chaseDist') active = (val === settings.chaseDist);
           else if (setting === 'env') active = (val === settings.env);
           else if (setting === 'batteryMode') active = (val === settings.batteryMode);
+          else if (setting === 'physics') active = (val === settings.physics);
           else if (setting === 'drill') active = (val === (window.Drills && Drills.isActive() ? Drills.getActiveName() : 'none'));
           else if (setting && setting.indexOf('loadout.') === 0) {
             var _sub = setting.split('.')[1];

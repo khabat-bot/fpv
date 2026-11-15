@@ -89,15 +89,40 @@ Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
 
 `js/physics.js` is rate-based (Betaflight-style): great feel, short step from complete.
 
-- [ ] Motor/ESC response lag and rotor inertia (rate ramps, not instant)
-- [ ] Full 6-DOF option: torque + inertia tensor instead of rate targets, gyro drift
-- [ ] Air density / temperature effects on thrust
-- [x] Damage model: impacts are graded. `Drone.impact()` breaks an arm above
-      `CFG.crashSeverity.damageSpeed` (reduced thrust + authority, prop-strike
-      sound, ARMED · DMG in the OSD) and crashes above `CFG.crashSpeed`, with a
-      0-1 severity driving the video feed
-- [ ] Damage beyond one arm: multiple stages, asymmetric thrust, wobble that
+- [x] Motor/ESC response lag and rotor inertia (rate ramps, not instant)
+      Thrust is a first-order lag on the command (`CFG.esc.spinUp` 32 ms,
+      `spinDown` 70 ms — props coast down slower than they spin up), and the
+      rate target lags the stick by `CFG.esc.rateLag` (15 ms). Steady state is
+      unchanged, so hover trim and the loadout T/W table still hold; only
+      transients ramp.
+- [x] Full 6-DOF option: torque + inertia tensor instead of rate targets, gyro drift
+      SETTINGS → FLIGHT → Physics: RATE (default, the Betaflight feel that was
+      already there) or 6-DOF. In 6-DOF the rate error becomes a motor torque
+      (N·m, capped by `CFG.physics.maxTorque`), the torque acts on the body
+      inertia tensor (yaw inertia is the largest, so yaw is the slowest axis),
+      and a wandering gyro bias (`CFG.physics.gyroDrift`) makes the realised
+      rate drift off the commanded one. Gains are calibrated to `torqueRef`, so
+      the sticks feel the same in both modes.
+- [x] Air density / temperature effects on thrust
+      `Drone._airDensityRatio()` runs the ISA troposphere model from the drone's
+      altitude, normalised to the 1.225 kg/m³ sea-level air the model is tuned
+      for (`CFG.environment`: `tempC`, `seaLevelPressure`, `density`). Thin air
+      at altitude costs thrust and drag; cold air adds punch. At the default
+      15 °C, ground level is a ratio of 1.00, so the baseline is unchanged.
+- [x] Damage model: impacts are graded. `Drone.impact()` damages the airframe
+      above `CFG.crashSeverity.damageSpeed` and crashes above `CFG.crashSpeed`,
+      with a 0-1 severity driving the video feed (prop-strike sound, DMG in the
+      OSD)
+- [x] Damage beyond one arm: multiple stages, asymmetric thrust, wobble that
       grows with damage
+      `CFG.crashSeverity.stages` has four levels (clean + 3). Each hit above
+      damageSpeed advances one stage, at most once per `damageCooldown` (0.35 s)
+      so one ground scrape cannot shred the whole airframe at once. Every stage
+      costs peak thrust and rotational authority, takes part of one motor's
+      share away (`asymmetry` — the airframe also rolls/pitches toward the dead
+      corner) and adds an attitude tremor plus thrust modulation (`wobble`).
+      The OSD shows `ARMED · DMG`, then `ARMED · DMG 2`, `ARMED · DMG 3`; a
+      respawn clears it.
 
 ### 5. Content library
 

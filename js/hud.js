@@ -114,8 +114,14 @@ function setStickVisible(v) {
     drawStickHUD(state);
 
     /* ---------------------- telemetry ---------------------- */
-    var _armDmg = !!(drone.damage && drone.damage.arm);
-    el.arm.textContent = drone.armed ? (_armDmg ? 'ARMED \u00b7 DMG' : 'ARMED') : 'DISARMED';
+    /* Progressive damage: stage 1 is the old one-broken-arm state, higher
+       stages mean more of the airframe is gone. */
+    var _dmgStage = (drone.damage && typeof drone.damage.stage === 'number')
+      ? drone.damage.stage
+      : ((drone.damage && drone.damage.arm) ? 1 : 0);
+    var _armDmg = _dmgStage > 0;
+    var _dmgLbl = 'ARMED \u00b7 DMG' + (_dmgStage > 1 ? ' ' + _dmgStage : '');
+    el.arm.textContent = drone.armed ? (_armDmg ? _dmgLbl : 'ARMED') : 'DISARMED';
     el.arm.style.color = drone.armed ? (_armDmg ? '#ffd479' : '#8dffb0') : '#ff9d9d';
 
     el.volt.textContent = drone.voltage.toFixed(1) + 'V';

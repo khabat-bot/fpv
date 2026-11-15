@@ -18,6 +18,40 @@ window.CFG = {
   angResponse: 0.060,
   angAccelMax: 420,
 
+  /* ----------------------- motor / ESC response ------------------------
+     A rate command is not a rate and a throttle command is not thrust:
+     the motor has to spin the prop up first. Both lags are first-order.
+       spinUp:   s for thrust to reach a new, higher demand (motor torque)
+       spinDown: s for thrust to fall (props coast, slower than spin-up)
+       rateLag:  s for a commanded body rate to reach the motors      */
+  esc: {
+    spinUp: 0.032,
+    spinDown: 0.070,
+    rateLag: 0.015
+  },
+
+  /* ------------------------- physics model ----------------------------
+     sixDof: false → rate loop (Betaflight-style rate targets, default)
+     sixDof: true  → the rate error becomes a motor TORQUE, the torque is
+                     applied to the body inertia tensor, and a gyro bias
+                     makes the realised rate drift. Same sticks, real
+                     rotor dynamics underneath. Toggled in SETTINGS →
+                     FLIGHT → Physics.
+       inertia:    kg·m² about each body axis. Yaw inertia is the largest
+                   (the mass is spread out in the prop plane), which is
+                   why a real quad yaws slower than it rolls.
+       torqueRef:  inertia the rate gains are calibrated against, so RATE
+                   and 6-DOF feel the same at the sticks
+       maxTorque:  N·m per axis — motor torque limit
+       gyroDrift:  rad/s the rate estimate can wander (gyro bias)      */
+  physics: {
+    sixDof: false,
+    inertia: { roll: 0.0042, pitch: 0.0056, yaw: 0.0085 },
+    torqueRef: 0.0042,
+    maxTorque: 0.9,
+    gyroDrift: 0.02
+  },
+
   /* Motor authority coupling: rate targets are scaled by throttle.
      Real quads lose rotational authority at low throttle because motor
      torque comes from prop RPM. rollPitch: 0.65 means 65% of stick rate
@@ -86,6 +120,20 @@ window.CFG = {
     lossHoldMs: 350
   },
 
+  /* --------------------------- air density ----------------------------
+     Thrust and drag scale with air density, and density falls with
+     altitude and rises in cold air. ISA troposphere model, sea-level
+     reference 1.225 kg/m³ (15 °C, 101325 Pa). At the default 15 °C the
+     ratio at ground level is 1.00, so nothing below changes.
+       tempC:        sea-level air temperature
+       seaLevelPressure: Pa
+       density:      set false to use constant sea-level density   */
+  environment: {
+    tempC: 15,
+    seaLevelPressure: 101325,
+    density: true
+  },
+
   /* -------------------------- environment ------------------------------ */
   /* Sky / fog / lighting presets. DAY reproduces the procedural-world
      defaults exactly (byte-identical look). On imported maps, the DAY
@@ -135,17 +183,34 @@ window.CFG = {
 
   /* -------------------------- crash severity --------------------------- */
   /* Impacts are graded instead of being a single flag.
-     - damageSpeed: impact (m/s) that breaks an arm — the flight continues,
-       but with reduced thrust and rotational authority
+     - damageSpeed: impact (m/s) that damages the airframe — the flight
+       continues, but with reduced thrust and rotational authority
      - fatalSpeed:  impact (m/s) at or above which the VTX is treated as dead
        (the video feed goes to NO SIGNAL). Between crashSpeed and this the
        crash still ends the flight, but the picture survives
-     - armThrustScale / armAuthorityScale: what one broken arm costs */
+     - damageCooldown: s between two damaging hits, so grinding along the
+       ground for three frames cannot shred the whole airframe at once
+     - stages: one entry per damage level, 0 = clean. Each hit above
+       damageSpeed advances one stage (up to the last).
+         thrustScale    peak thrust left
+         authorityScale rotational authority left
+         asymmetry      share of one motor's thrust that is gone (0-1). The
+                        airframe also rolls/pitches toward the dead corner
+         wobble         tremor amplitude multiplier (attitude + thrust) */
   crashSeverity: {
     damageSpeed: 4.5,
     fatalSpeed: 15.0,
-    armThrustScale: 0.80,
-    armAuthorityScale: 0.85
+    damageCooldown: 0.35,
+    asymGain: 12,        /* rad/s^2 of attitude bias per unit asymmetry */
+    wobbleFreq: 7,       /* Hz */
+    wobbleAccel: 8,      /* rad/s^2 at wobble = 1 */
+    wobbleThrust: 0.05,  /* thrust modulation at wobble = 1 */
+    stages: [
+      { thrustScale: 1.00, authorityScale: 1.00, asymmetry: 0.00, wobble: 0.0 },
+      { thrustScale: 0.80, authorityScale: 0.88, asymmetry: 0.30, wobble: 0.5 },
+      { thrustScale: 0.58, authorityScale: 0.72, asymmetry: 0.55, wobble: 1.0 },
+      { thrustScale: 0.36, authorityScale: 0.55, asymmetry: 0.70, wobble: 1.5 }
+    ]
   },
 
   /* --------------------------- easy mode ------------------------------ */
