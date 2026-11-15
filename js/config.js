@@ -133,6 +133,21 @@ window.CFG = {
   hitSpeed: 6.0,
   depthCrash: 1.5,
 
+  /* -------------------------- crash severity --------------------------- */
+  /* Impacts are graded instead of being a single flag.
+     - damageSpeed: impact (m/s) that breaks an arm — the flight continues,
+       but with reduced thrust and rotational authority
+     - fatalSpeed:  impact (m/s) at or above which the VTX is treated as dead
+       (the video feed goes to NO SIGNAL). Between crashSpeed and this the
+       crash still ends the flight, but the picture survives
+     - armThrustScale / armAuthorityScale: what one broken arm costs */
+  crashSeverity: {
+    damageSpeed: 4.5,
+    fatalSpeed: 15.0,
+    armThrustScale: 0.80,
+    armAuthorityScale: 0.85
+  },
+
   /* --------------------------- easy mode ------------------------------ */
   /* Self-leveling "angle mode" for casual flying.
      - maxAngleDeg: maximum tilt commanded by full stick deflection

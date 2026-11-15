@@ -149,6 +149,12 @@ if (window.Replay) Replay.init(scene);
   /* Debug globals — accessible from Safari Web Inspector */
   window.__scene = scene;
   window.__drone = drone;
+
+  /* A light impact breaks an arm instead of ending the flight; physics
+     grades it and calls back here for the audio hit. */
+  drone.onDamage = function () {
+    if (window.SimAudio && SimAudio.damageSound) SimAudio.damageSound();
+  };
   window.__world = world;
 
   /* Multiplayer scene hook — MP needs a reference to the main scene
@@ -2404,7 +2410,8 @@ function wireDisplayShell() {
     if (!replayActive && drone.crashed && !crashShown) {
       crashShown = true;
       if (window.SimAudio && SimAudio.crashSound) SimAudio.crashSound();
-      HUD.showCrash(true);
+      /* Severity decides whether the goggles die with the airframe. */
+      HUD.showCrash(true, drone.crashSeverity);
       updateArmButton();
     }
 
