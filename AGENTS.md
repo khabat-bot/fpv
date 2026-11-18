@@ -36,6 +36,7 @@ js/config.js → CFG           (every flight-model tunable lives here)
 js/audio.js  → SimAudio      (procedural Web Audio, no sound files)
 js/world.js  → World         (procedural scenery; returns heightAt(x,z) for collision)
 js/physics.js→ Drone         (rate-based acro quad + LiPo model)
+js/controller.js → Controller (external gamepad / CRSF RC input; feeds Input)
 js/input.js  → Input         (multi-touch virtual sticks + keyboard)
 js/hud.js    → HUD           (OSD: artificial horizon + telemetry)
 js/ghost-trail.js → GhostTrail
@@ -130,6 +131,16 @@ made in both files to keep them in sync.**
   script tags, no ES modules.
 - **Quality presets are DPR-only**: LOW/MED/HIGH = devicePixelRatio 1.0/1.5/2.0;
   default is MED on mobile, HIGH on desktop (mobile detected via user-agent).
+- **External controller input**: `js/controller.js` (`window.Controller`) is
+  polled from `Input.update(dt)` on every frame. When it returns values (a
+  connected gamepad, or live CRSF frames over Web Serial) it owns all four
+  axes and `Input` mirrors them onto the virtual sticks; otherwise
+  keyboard/touch is used unchanged. Tunables are in `CFG.controller`
+  (SETTINGS → INPUT): source, channel order, stick layout (MODE 1/2 or
+  RADIO), throttle ABS/HOLD,
+  deadband, travel, failsafe and the CRSF baud rate. Failsafe is simulated
+  there, not in the flight model. `js/controller.js` also has `_feedSerial` /
+  `_reset` test hooks so the CRSF parser can be exercised without hardware.
 - The two servers differ slightly: the Rust one honors `FPV_ROOT`; Python always
   serves from its own directory. Python previously had a TCP bug that dropped
   static responses mid-stream (that's what the boot guard protects against).

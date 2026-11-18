@@ -1727,6 +1727,30 @@ transition: opacity 0.5s;
 #drill-metrics.hidden { display: none; }
 #drill-metrics.fade { opacity: 0; }
 
+/* ------------------- external controller messages -------------------- */
+#ctl-toast {
+  position: fixed;
+  top: calc(104px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  font-family: inherit;
+  color: #cfe4ff;
+  background: rgba(0, 10, 20, 0.60);
+  border: 1px solid rgba(120, 180, 255, 0.30);
+  border-radius: 6px;
+  padding: 4px 14px;
+  text-align: center;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 1;
+  transition: opacity 0.3s ease-out;
+}
+#ctl-toast.hidden { display: none; }
+#ctl-toast.fade { opacity: 0; }
+
 /* ============================================================
 Replay button active state (appended — additive)
 ============================================================ */

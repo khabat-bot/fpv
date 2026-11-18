@@ -42,6 +42,7 @@
     </div>
   </div>
       <div id="drill-metrics" class="hidden"></div>
+      <div id="ctl-toast" class="hidden"></div>
 </div>
 
 <!-- ======================= BUTTONS =========================== -->
@@ -96,6 +97,7 @@
       <button class="sp-tab active" data-tab="GENERAL">GENERAL</button>
       <button class="sp-tab" data-tab="CAMERA">CAMERA</button>
       <button class="sp-tab" data-tab="FLIGHT">FLIGHT</button>
+      <button class="sp-tab" data-tab="INPUT">INPUT</button>
       <button class="sp-tab" data-tab="LOADOUT">LOADOUT</button>
       <button class="sp-tab" data-tab="HUD">HUD</button>
       <button class="sp-tab" data-tab="TELEM">TELEM</button>
@@ -274,6 +276,82 @@
           <button class="sp-opt" data-val="orbit">ORBIT</button>
           </div>
           </div>
+    </div>
+    <div class="sp-pane" data-pane="INPUT">
+      <div class="sp-row">
+        <span class="sp-lbl">Controller</span>
+        <div class="sp-group" data-setting="ctlSource">
+          <button class="sp-opt" data-val="AUTO">AUTO</button>
+          <button class="sp-opt" data-val="PAD">PAD</button>
+          <button class="sp-opt" data-val="CRSF">CRSF</button>
+          <button class="sp-opt" data-val="OFF">OFF</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Channel Order</span>
+        <div class="sp-group" data-setting="ctlOrder">
+          <button class="sp-opt" data-val="AETR">AETR</button>
+          <button class="sp-opt" data-val="TAER">TAER</button>
+          <button class="sp-opt" data-val="RETA">RETA</button>
+          <button class="sp-opt" data-val="ETAR">ETAR</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Stick Layout</span>
+        <div class="sp-group" data-setting="ctlStickMode">
+          <button class="sp-opt" data-val="MODE2">MODE 2</button>
+          <button class="sp-opt" data-val="MODE1">MODE 1</button>
+          <button class="sp-opt" data-val="RADIO">RADIO</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Throttle</span>
+        <div class="sp-group" data-setting="ctlThrMode">
+          <button class="sp-opt" data-val="ABS">ABS</button>
+          <button class="sp-opt" data-val="HOLD">HOLD</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">CRSF Baud</span>
+        <div class="sp-group" data-setting="ctlBaud">
+          <button class="sp-opt" data-val="420000">420K</button>
+          <button class="sp-opt" data-val="400000">400K</button>
+          <button class="sp-opt" data-val="115200">115K</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Deadband</span>
+        <div class="sp-group" data-setting="ctlDeadband">
+          <button class="sp-opt" data-val="0">0%</button>
+          <button class="sp-opt" data-val="0.02">2%</button>
+          <button class="sp-opt" data-val="0.04">4%</button>
+          <button class="sp-opt" data-val="0.08">8%</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Stick Travel</span>
+        <div class="sp-group" data-setting="ctlTravel">
+          <button class="sp-opt" data-val="1">100%</button>
+          <button class="sp-opt" data-val="0.9">90%</button>
+          <button class="sp-opt" data-val="0.8">80%</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">Failsafe</span>
+        <div class="sp-group" data-setting="ctlFailsafe">
+          <button class="sp-opt" data-val="1">ON</button>
+          <button class="sp-opt" data-val="0">OFF</button>
+        </div>
+      </div>
+      <div class="sp-row">
+        <span class="sp-lbl">USB / Serial</span>
+        <div class="sp-group">
+          <button id="ctl-connect" class="sp-opt">CONNECT</button>
+          <button id="ctl-rescan" class="sp-opt">RESCAN</button>
+        </div>
+      </div>
+      <div id="ctl-status" class="telem-status">NO CONTROLLER</div>
+      <div class="telem-hint">PAD reads any gamepad the OS exposes — USB, Bluetooth, or a radio in EdgeTX/OpenTX USB-joystick mode (press a button on it, then RESCAN). CRSF opens an ELRS TX module or receiver as a serial port (Chrome/Edge desktop only). Buttons A/B on a pad arm and reset. A self-centring pad needs Throttle HOLD. Failsafe centres the sticks and ramps to a gentle descent if the link drops, then cuts the motors.</div>
     </div>
     <div class="sp-pane" data-pane="LOADOUT">
       <div class="lo-preview-side">
@@ -497,6 +575,7 @@
 <script src="js/audio.js"></script>
 <script src="js/world.js"></script>
 <script src="js/physics.js"></script>
+<script src="js/controller.js"></script>
 <script src="js/input.js"></script>
 <script src="js/hud.js"></script>
 <script src="js/ghost-trail.js"></script>
