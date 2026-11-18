@@ -221,9 +221,7 @@ if (window.Replay) Replay.init(scene);
     const sz = previewRenderer.getSize(new THREE.Vector2());
     if (Math.abs(sz.x - w) > 1 || Math.abs(sz.y - h) > 1) {
       previewRenderer.setSize(w, h, false);
-gate
       previewCamera.aspect = w / h;
-git
       previewCamera.updateProjectionMatrix();
     }
     previewVisual.update(previewDrone, previewIdleState, dt || 0.016);
@@ -1349,9 +1347,10 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       var graphOn = !!(window.Telemetry && Telemetry.isGraphVisible
         && Telemetry.isGraphVisible());
       tl.classList.toggle('hud-off', !anyVisible && !graphOn);
-      /* Ghost trail visibility */
-      if (window.GhostTrail) GhostTrail.setVisible(!!settings.hud.ghostTrail);
     }
+    /* Ghost trail visibility — independent of the telemetry panel, which
+       may be missing entirely. */
+    if (window.GhostTrail) GhostTrail.setVisible(!!settings.hud.ghostTrail);
   }
   function applyFpsCap() { fpsCap = settings.fpsCap; }
   function applyFpsCounter() {
