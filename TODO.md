@@ -233,3 +233,14 @@ log is one flight and disarmed bench time never pushes the flight out.
 - [ ] Server protocol parity tests between `server.py` and `server.rs`
 - [ ] Protocol spec doc derived from the server.py docstring, kept in sync
       with both servers
+
+- [ ] Net state relay: reject non-finite `p`/`q`/`v` when framing.
+      `clean_vec` (server.py) already checks `math.isfinite` on input and
+      returns None, so this is not a live bug. It is defence in depth
+      against a future writer that skips clean_vec: json.dumps would
+      emit `NaN`/`Infinity` (invalid JSON) and every peer's
+      `JSON.parse` would then throw. Add a test beside it.
+- [ ] External controller: the INPUT-tab status poller never stops.
+      `setInterval(..., 250)` in the controller panel (`js/main.js`,
+      ~line 1988) has no `clearInterval`; clear it when the panel
+      is torn down.

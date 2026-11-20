@@ -22,6 +22,11 @@ linter — verification is manual in a browser.
   --url http://localhost:8080 --no-autoupdate` (see README.md).
 - The `rust-server` binary is gitignored; it is never committed.
 
+- Notify the user (alert/ping) when finished, or when a decision is
+  needed, with `/bin/inoty "<message>"`. It only exists on the owner's
+  machine: if it is missing or fails, ignore it and carry on with the
+  normal reply; do not report the tooling failure as a blocker.
+
 ## Architecture
 
 ### There is no module system
