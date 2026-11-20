@@ -72,11 +72,18 @@
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent || '');
   const dpr = window.devicePixelRatio || 1;
 
-  /* ---------------------- quality presets ---------------------------- */
+  /* ---------------------- quality presets ----------------------------
+     Presets are a fraction of the ratio the canvas backing store
+     ACTUALLY reaches at native resolution. It is measured, not
+     window.devicePixelRatio, which the browser/GPU can clamp below the
+     reported value. A 3x iPhone's HIGH therefore renders at a true 3x
+     instead of being pinned at an absolute 2x, and a 1.5x phone's MED
+     at 1.125x instead of a full 1.5x. On a 2x phone these fractions
+     reproduce the old absolute 1.0/1.5/2.0 caps exactly. */
   const QUALITY = {
-    LOW:  { dpr: 1.0 },
-    MED:  { dpr: 1.5 },
-    HIGH: { dpr: 2.0 }
+    LOW:  { frac: 0.50 },
+    MED:  { frac: 0.75 },
+    HIGH: { frac: 1.00 }
   };
   let qualityName = isMobile ? 'MED' : 'HIGH';
 
@@ -85,11 +92,39 @@
     antialias: !isMobile,
     powerPreference: 'high-performance'
   });
-  renderer.setPixelRatio(Math.min(dpr, QUALITY[qualityName].dpr));
+  renderer.setPixelRatio(QUALITY[qualityName].frac * dpr);
   if (window.FPVFeed) FPVFeed.init(renderer);
 
+  /* The ratio the backing store really achieves at "native": set the
+     renderer to the reported device ratio, let it size the canvas, then
+     read back what the browser actually allocated. Re-measured only when
+     the reported DPR or the canvas CSS width changes (zoom, display
+     swap, toolbar collapse). */
+  let nativeRatio = dpr;
+  let _nativeKey = '';
+  function measureNativeRatio() {
+    const key = (window.devicePixelRatio || 1) + 'x' + (canvas.clientWidth | 0);
+    if (key === _nativeKey) return false;
+    const old = nativeRatio;
+    _nativeKey = key;
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    const r = canvas.width / (canvas.clientWidth || 1);
+    nativeRatio = (isFinite(r) && r > 0.25) ? r : (window.devicePixelRatio || 1);
+    return nativeRatio !== old;
+  }
+
+  let dprFraction = QUALITY[qualityName].frac;
+  function applyQualityDPR() {
+    const next = Math.min(Math.max(dprFraction * nativeRatio, 0.75), nativeRatio);
+    if (Math.abs(next - renderer.getPixelRatio()) > 0.01) {
+      renderer.setPixelRatio(next);
+    }
+  }
+
+  /* Absolute cap (auto-degrade, heavy maps): resolved against the
+     measured backing ratio, never above it. */
   function setDPRCap(cap) {
-    const next = Math.min(window.devicePixelRatio || 1, cap);
+    const next = Math.min(cap, nativeRatio);
     if (Math.abs(next - renderer.getPixelRatio()) > 0.01) {
       renderer.setPixelRatio(next);
     }
@@ -222,9 +257,7 @@ if (window.Replay) Replay.init(scene);
     const sz = previewRenderer.getSize(new THREE.Vector2());
     if (Math.abs(sz.x - w) > 1 || Math.abs(sz.y - h) > 1) {
       previewRenderer.setSize(w, h, false);
-gate
       previewCamera.aspect = w / h;
-git
       previewCamera.updateProjectionMatrix();
     }
     previewVisual.update(previewDrone, previewIdleState, dt || 0.016);
@@ -293,6 +326,10 @@ git
     if (window.FPVFeed) FPVFeed.resize();
     Input.resize();
     if (window.Telemetry) Telemetry.resize();
+    /* Re-resolve the preset ratio if the measured backing ratio changed
+       (DPR change / canvas width change); ordinary resizes keep any
+       auto-degraded ratio in place. */
+    if (measureNativeRatio()) applyQualityDPR();
   }
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', () => setTimeout(resize, 250));
@@ -311,10 +348,46 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   let fpsUpdateTimer = 0;
   let fpsLowTimer = 0;
 
-  /* 120 Hz detection — measures how fast rAF actually fires */
-  let displayHz = 60;
+  /* Display refresh detection: seed from the update-frequency media
+     feature when the browser supports it (immediate on 90/120 Hz
+     panels), then refine by measuring how fast rAF actually fires. */
+  let displayHz = (function () {
+    if (window.matchMedia) {
+      const hzs = [144, 120, 96, 90, 85, 80, 75, 60];
+      for (let i = 0; i < hzs.length; i++) {
+        try {
+          if (window.matchMedia('(update-frequency: ' + hzs[i] + 'hz)').matches) {
+            return hzs[i];
+          }
+        } catch (e) { break; }
+      }
+    }
+    return 60;
+  })();
   let _rafStart = performance.now();
   let _rafCount = 0;
+
+  /* Physics rate follows the MEASURED display refresh rate instead of a
+     fixed platform constant: mobile steps once per drawn frame (a
+     60 Hz iPhone runs 60 Hz, not 120, so it no longer steps twice per
+     frame), desktop runs two steps per frame (the old 240 on a 120 Hz
+     panel). Clamped per platform so a throttled or fps-capped panel
+     never drops the sim below a usable floor. */
+  let PHYSICS_HZ = 0;
+  let FIXED = 0;
+  let accumulator = 0;
+
+  function syncPhysicsRate() {
+    const hz = isMobile
+      ? Math.min(120, Math.max(60, displayHz))
+      : Math.min(240, Math.max(120, displayHz * 2));
+    if (hz !== PHYSICS_HZ) {
+      PHYSICS_HZ = hz;
+      FIXED = 1 / hz;
+      accumulator = 0;
+    }
+  }
+  syncPhysicsRate();
 
   function updateFPS(dt) {
     fpsSamples.push(1 / Math.max(dt, 0.001));
@@ -329,6 +402,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       displayHz = Math.round(_rafCount * 1000 / (now - _rafStart));
       _rafCount = 0;
       _rafStart = now;
+      syncPhysicsRate();
     }
 
     fpsUpdateTimer += dt;
@@ -716,7 +790,8 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   const gfxOrder = ['LOW', 'MED', 'HIGH'];
   function applyQuality(name) {
     qualityName = name;
-    setDPRCap(QUALITY[name].dpr);
+    dprFraction = QUALITY[name].frac;
+    applyQualityDPR();
     document.body.classList.toggle('gfx-low', name === 'LOW');
     if (btnGfx) {
       btnGfx.textContent = 'GFX: ' + name;
@@ -1050,7 +1125,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     drone.colliderIndex = world.colliderIndex || null;
     if (typeof drone._disposeBVH === 'function') drone._disposeBVH();
     drone._bvhColliderCount = -1;
-    setDPRCap(QUALITY[qualityName].dpr);
+    applyQualityDPR();
     drone.reset(world.spawn.x, world.spawn.z);
     if (window.GhostTrail) GhostTrail.clear();
     flightTime = 0;
@@ -1129,7 +1204,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
 
       if (result.meshCount > 2000) setDPRCap(1.0);
       else if (result.meshCount > 800) setDPRCap(1.25);
-      else setDPRCap(QUALITY[qualityName].dpr);
+      else applyQualityDPR();
 
       drone.reset(0, 0);
       if (window.GhostTrail) GhostTrail.clear();
@@ -2459,11 +2534,9 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
        gesture registration. The next stick/key touch calls resumeAudio(). */
   }
 
-  /* ============================ main loop ============================= */
-  const PHYSICS_HZ = isMobile ? 120 : 240;
-  const FIXED = 1 / PHYSICS_HZ;
-  let accumulator = 0;
-
+  /* ============================ main loop =============================
+     Physics rate (PHYSICS_HZ / FIXED / accumulator) is derived from the
+     measured display refresh rate up top, next to displayHz. */
   function frame(now) {
     requestAnimationFrame(frame);
 

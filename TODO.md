@@ -50,14 +50,32 @@ are wired from `js/main.js`.
       lock cannot be forced in a Safari tab; the rotate hint is the
       substitute.
 
-Still open in this area:
+Previously open in this area (both done):
 
-- [ ] Physics rate is sized from the real display refresh rate instead of a
+- [x] Physics rate is sized from the real display refresh rate instead of a
       fixed 120 Hz on mobile (a 60 Hz iPhone serves twice as many substeps
       as it can draw).
-- [ ] Render DPR cap resolves against the actual backing-store ratio rather
+      `displayHz` (seeded from the `update-frequency` media feature where
+      supported, then refined by measuring rAF over 1.5 s windows in
+      `frame()`) drives `PHYSICS_HZ`/`FIXED` in `js/main.js`: mobile runs
+      one substep per drawn frame (60 Hz iPhone → 60 Hz, clamped [60, 120]),
+      desktop two per frame (120 Hz panel → 240 Hz, clamped [120, 240]). A
+      60 Hz desktop now runs 120 instead of 4x-oversampled 240. The CCD
+      substep cap in `js/physics.js` doubles (6 → 12) on 60 Hz steps so the
+      per-substep anti-tunnelling resolution is unchanged.
+- [x] Render DPR cap resolves against the actual backing-store ratio rather
       than `devicePixelRatio` (iPhone 3x renders 2x on HIGH; cheap phones
       warm up).
+      Quality presets are now fractions of the ratio the canvas backing
+      store actually reaches at native resolution (`measureNativeRatio()`
+      sets the renderer to the reported DPR, sizes the canvas, and reads
+      back `canvas.width / clientWidth`, which catches browsers/GPUs that
+      clamp the backing below the reported DPR). LOW/MED/HIGH = 50/75/100%
+      of native, so a 3x iPhone's HIGH renders at a true 3x, a 1.5x phone's
+      MED at 1.125x, and a 2x phone reproduces the old absolute 1.0/1.5/2.0
+      caps exactly. Absolute caps (auto-degrade, heavy maps) still resolve
+      via `min(cap, nativeRatio)`; the preset ratio is re-resolved only
+      when the measured backing ratio itself changes.
 
 ### 2. Real RC controller support — done
 
