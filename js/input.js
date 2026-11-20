@@ -205,6 +205,7 @@ window.Input = (function () {
       const self = this;
 
       installIOSGuards();
+      if (window.Controller && Controller.init) Controller.init();
 
       this.left = new Joystick(document.getElementById('stick-left'), {
         springX: true,
@@ -267,6 +268,34 @@ window.Input = (function () {
 
     update: function (dt) {
       const k = this.keys;
+
+      /* External transmitter / gamepad (js/controller.js). While it is
+         live it owns all four axes; the touch sticks and keys are left
+         untouched so a stray tap cannot fight the radio. The virtual
+         sticks are mirrored to the incoming values so the HUD and the
+         on-screen gimbals show what the flight model is being told. */
+      let ctl = null;
+      if (window.Controller && window.Controller.update) {
+        /* Never let an exotic device break the frame loop: a controller
+           that throws this frame just hands the sticks back this frame. */
+        try { ctl = window.Controller.update(dt); } catch (err) { ctl = null; }
+      }
+      if (ctl) {
+        this.ctlActive = true;
+        this.left.x = clamp(ctl.yaw, -1, 1);
+        this.left.y = 1 - 2 * clamp(ctl.throttle, 0, 1);
+        this.right.x = clamp(ctl.roll, -1, 1);
+        this.right.y = -clamp(ctl.pitch, -1, 1);
+        this.left.render();
+        this.right.render();
+
+        this._state.throttle = clamp(ctl.throttle, 0, 1);
+        this._state.yaw      = clamp(ctl.yaw, -1, 1);
+        this._state.pitch    = clamp(ctl.pitch, -1, 1);
+        this._state.roll     = clamp(ctl.roll, -1, 1);
+        return this._state;
+      }
+      this.ctlActive = false;
 
       if (!this.left.active) {
         let d = 0;

@@ -77,14 +77,53 @@ Previously open in this area (both done):
       via `min(cap, nativeRatio)`; the preset ratio is re-resolved only
       when the measured backing ratio itself changes.
 
-### 2. Real RC controller support
+### 2. Real RC controller support — done
 
-No gamepad/Bluetooth/USB input exists yet; only keyboard + virtual sticks.
+`js/controller.js` (`window.Controller`) turns two transports into the same
+four axes the flight model already understands: throttle 0-1 and yaw / pitch /
+roll -1..1. `js/input.js` asks it first every frame and mirrors the values onto
+the virtual sticks, so while a controller is live it owns all four axes and a
+stray screen tap or key cannot fight it. Settings live in `CFG.controller` and
+are edited in SETTINGS -> INPUT; the sim itself is untouched.
 
-- [ ] ELRS/CRSF over USB (WebHID) or serial bridge
-- [ ] Bluetooth gamepad fallback
-- [ ] Channel order, stick travel, deadband settings
-- [ ] Failsafe behavior on dropped link (controlled drop-out, not instant crash)
+- [x] ELRS/CRSF over USB serial (Web Serial)
+      SETTINGS -> INPUT -> CONNECT opens an ELRS TX module / receiver
+      CDC-ACM port at 420000 baud (420K / 400K / 115K selectable) and decodes
+      CRSF RC_CHANNELS_PACKED (0x16): sixteen 11-bit channels at 172...1812 us,
+      CRC8/DVB-S2 checked, frame sync re-found across chunked reads and garbage
+      bytes, and a frame that fails its CRC never moves the sticks. A
+      module that enumerates as HID is just a gamepad and arrives through the
+      PAD path below; CRSF lives on serial, not WebHID. Chromium-only (Web
+      Serial) and the port picker needs the CONNECT click.
+- [x] Bluetooth gamepad fallback
+      Gamepad API, which covers Bluetooth pads, USB pads and a radio in
+      EdgeTX/OpenTX USB-joystick mode. MODE 1 / MODE 2 stick layout for
+      gamepads, RADIO layout for a transmitter that sends its channels as
+      axes (CH1 -> X, CH2 -> Y, CH3 -> Z, CH4 -> Rx), and pad buttons A/B arm
+      and reset. A pad only shows up after it sends an event
+      and the page has been clicked, so SETTINGS -> INPUT shows a live
+      "press a button on the pad" state and a RESCAN button.
+- [x] Channel order, stick travel, deadband settings
+      AETR / TAER / RETA / ETAR channel order (CRSF), deadband 0/2/4/8 %,
+      stick travel 80/90/100 % (a stick that only reaches 80 % still reaches
+      full output), throttle ABS or HOLD (HOLD integrates the stick so a
+      spring-centred gamepad can hold a throttle). ALL tunables in
+      `CFG.controller`; the panel only writes settings.controller.
+- [x] Failsafe behavior on dropped link (controlled drop-out, not instant crash)
+      A live link that goes quiet for `CFG.controller.timeoutMs` (350 ms pad,
+      450 ms CRSF) centres the sticks and ramps the throttle to 80 % of hover
+      throttle over ~1 s, so the quad descends instead of freezing or cutting.
+      After `dropSecs` (3 s) the motors cut (Betaflight stage 2) and a link
+      that never returns releases the sticks back to keyboard/touch 2 s later,
+      so a dead radio cannot lock the simulator out. FAILSAFE OFF holds the
+      last commands instead. Link loss / restore / failsafe are announced
+      on screen (`#ctl-toast`).
+
+Limits worth knowing: the descent is sticks-centred, not self-levelling --
+in ACRO a centred stick holds the current attitude, and only an angle flight
+mode levels it. Real hardware was not available here, so both transports were
+verified with a fake gamepad and a fake serial stream in the browser, plus the
+frame parser and axis maths in a Node harness.
 
 ### 3. FPV video feed realism
 

@@ -95,6 +95,44 @@ window.CFG = {
      battery beeper. Toggled from SETTINGS -> FLIGHT -> Battery. */
   infiniteBattery: false,
 
+  /* ------------------------ external controllers ------------------------
+     RC transmitter / gamepad input (js/controller.js), SETTINGS → INPUT.
+       source:    'AUTO' = first connected gamepad (or a live CRSF port),
+                  'PAD' = gamepad only, 'CRSF' = ELRS over USB serial only,
+                  'OFF' = keyboard + virtual sticks only
+       order:     transmitter channel order, AETR | TAER | RETA | ETAR
+       stickMode: 'MODE2' (thr/yaw left) or 'MODE1' (pitch/yaw left) for
+                  gamepads, 'RADIO' when the pad sends channels as axes
+                  (EdgeTX/OpenTX USB joystick). CRSF always uses the
+                  channel order and needs no stick mode.
+       deadband:  stick deadband, fraction of full deflection
+       travel:    fraction of the axis range the physical stick reaches
+                  (0.8 = a stick that only moves 80% still reaches full)
+       thrMode:   'ABS' absolute throttle position, 'HOLD' incremental
+                  (for spring-centred gamepad sticks)
+       holdRate:  full-travel-per-second rate for throttle HOLD mode
+       failsafe:  true = centre the sticks and descend when the link drops,
+                  false = hold the last commands (no failsafe)
+       timeoutMs: link silence before it counts as lost
+       dropSecs:  seconds of controlled descent before the motors cut
+       failsafeThrottle: descent throttle; null = 80% of hover throttle
+       crsf.baudRate:  ELRS TX modules / receivers use 420000 8N1
+       crsf.timeoutMs: silence before a CRSF link counts as lost          */
+  controller: {
+    source: 'AUTO',
+    order: 'AETR',
+    stickMode: 'MODE2',
+    deadband: 0.04,
+    travel: 1.0,
+    thrMode: 'ABS',
+    holdRate: 1.0,
+    failsafe: true,
+    timeoutMs: 350,
+    dropSecs: 3.0,
+    failsafeThrottle: null,
+    crsf: { baudRate: 420000, timeoutMs: 450 }
+  },
+
   /* ------------------------------ camera ------------------------------- */
   camera: {
     fovH: 128,

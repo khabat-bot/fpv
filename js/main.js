@@ -19,6 +19,7 @@
     { name: 'SimAudio', src: 'js/audio.js',         ready: () => window.SimAudio && typeof window.SimAudio.update === 'function' },
     { name: 'World',    src: 'js/world.js',         ready: () => !!window.World },
     { name: 'Drone',    src: 'js/physics.js',       ready: () => typeof window.Drone === 'function' },
+    { name: 'Controller', src: 'js/controller.js',  ready: () => !!window.Controller },
     { name: 'Input',    src: 'js/input.js',         ready: () => !!window.Input },
     { name: 'HUD',      src: 'js/hud.js',           ready: () => !!window.HUD },
     { name: 'Telemetry', src: 'js/telemetry.js',    ready: () => !!window.Telemetry },
@@ -1279,6 +1280,26 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   Input.onArmToggle = toggleArm;
   Input.onReset = respawn;
 
+  /* External controller events: pad buttons arm/reset, and the pilot gets
+     an on-screen message when the link (or the failsafe) changes state. */
+  if (window.Controller && Controller.onEvent) {
+    Controller.onEvent(function (type, data) {
+      if (type === 'arm') toggleArm();
+      else if (type === 'reset') respawn();
+      else if (type === 'linkLost') showCtlToast('CONTROL LINK LOST');
+      else if (type === 'linkRestored') showCtlToast('LINK RESTORED');
+      else if (type === 'failsafe') showCtlToast('FAILSAFE · CENTRE + DESCEND');
+      else if (type === 'failsafeEnd') showCtlToast('FAILSAFE ENDED · STICKS RELEASED');
+      else if (type === 'padConnected') showCtlToast('PAD CONNECTED');
+      else if (type === 'padDisconnected') showCtlToast('PAD DISCONNECTED');
+      else if (type === 'serialOpen') showCtlToast('SERIAL PORT OPEN');
+      else if (type === 'serialError') {
+        showCtlToast('SERIAL: ' + ((data && data.message) || 'ERROR'));
+      }
+      if (typeof updateControllerStatus === 'function') updateControllerStatus();
+    });
+  }
+
   setTimeout(() => {
     const h = document.getElementById('help');
     if (h) h.classList.add('fade');
@@ -1310,6 +1331,19 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     batteryMode: 'REAL',
     physics: 'RATE',
     telemGraph: false,
+    /* External transmitter / gamepad (SETTINGS → INPUT). Merged into
+       CFG.controller by applyController(); the transport-level numbers
+       (crsf baud/rate timeouts, failsafe throttle) stay in config.js. */
+    controller: {
+      source: 'AUTO',
+      order: 'AETR',
+      stickMode: 'MODE2',
+      thrMode: 'ABS',
+      deadband: 0.04,
+      travel: 1.0,
+      failsafe: true,
+      baud: 420000
+    },
     loadout: {
       frame:   'freestyle_5',
       motors:  'default_2207',
@@ -1360,10 +1394,37 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
           settings.chaseDist = s.chaseDist;
         }
         if (typeof s.tab === 'string'
-            && ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD','TELEM'].indexOf(s.tab) !== -1) {
+            && ['GENERAL','CAMERA','FLIGHT','INPUT','LOADOUT','HUD','TELEM'].indexOf(s.tab) !== -1) {
           settings.tab = s.tab;
         }
         if (typeof s.telemGraph === 'boolean') settings.telemGraph = s.telemGraph;
+        if (s.controller && typeof s.controller === 'object') {
+          var cs = s.controller;
+          if (typeof cs.source === 'string'
+              && ['AUTO','PAD','CRSF','OFF'].indexOf(cs.source) !== -1) {
+            settings.controller.source = cs.source;
+          }
+          if (typeof cs.order === 'string'
+              && ['AETR','TAER','RETA','ETAR'].indexOf(cs.order) !== -1) {
+            settings.controller.order = cs.order;
+          }
+          if (['MODE1','MODE2','RADIO'].indexOf(cs.stickMode) !== -1) {
+            settings.controller.stickMode = cs.stickMode;
+          }
+          if (cs.thrMode === 'ABS' || cs.thrMode === 'HOLD') {
+            settings.controller.thrMode = cs.thrMode;
+          }
+          if (typeof cs.deadband === 'number' && cs.deadband >= 0 && cs.deadband <= 0.5) {
+            settings.controller.deadband = cs.deadband;
+          }
+          if (typeof cs.travel === 'number' && cs.travel >= 0.3 && cs.travel <= 1) {
+            settings.controller.travel = cs.travel;
+          }
+          if (typeof cs.failsafe === 'boolean') settings.controller.failsafe = cs.failsafe;
+          if ([420000, 400000, 115200].indexOf(cs.baud) !== -1) {
+            settings.controller.baud = cs.baud;
+          }
+        }
         var VALID_MODES = { ACRO:1, SLOW:1, SPORT:1, FAST:1 };
         if (typeof s.flightMode === 'string' && VALID_MODES[s.flightMode]) {
           settings.flightMode = s.flightMode;
@@ -1514,6 +1575,62 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     }
   }
 
+  /* ------------------- external controller (js/controller.js) --------- */
+  var ctlToastTimer = 0;
+  function showCtlToast(text) {
+    var el = document.getElementById('ctl-toast');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove('hidden', 'fade');
+    clearTimeout(ctlToastTimer);
+    ctlToastTimer = setTimeout(function () { el.classList.add('fade'); }, 2400);
+  }
+
+  function controllerStatusText() {
+    if (!window.Controller) return 'CONTROLLER MODULE MISSING';
+    var s = Controller.status();
+    if (s.failsafe) return 'FAILSAFE · ' + (s.label || s.source);
+    if (s.kind === 'PAD') return 'PAD · ' + s.label;
+    if (s.kind === 'CRSF') {
+      return 'CRSF · ' + (s.rateHz ? s.rateHz + ' Hz' : 'FRAMES OK');
+    }
+    if (s.source === 'CRSF') {
+      if (!s.serial.supported) return 'CRSF · WEB SERIAL NOT AVAILABLE';
+      if (s.serial.error) return 'CRSF · ' + s.serial.error;
+      if (s.serial.open) return 'CRSF · WAITING FOR FRAMES';
+      return 'CRSF · NOT CONNECTED · PRESS CONNECT';
+    }
+    if (s.source === 'OFF') return 'CONTROLLERS OFF · TOUCH + KEYS';
+    if (s.serial.error) return 'NO CONTROLLER · ' + s.serial.error;
+    return 'NO CONTROLLER · PRESS A BUTTON ON THE PAD';
+  }
+
+  function updateControllerStatus() {
+    var el = document.getElementById('ctl-status');
+    if (!el) return;
+    var text = controllerStatusText();
+    if (el.textContent !== text) el.textContent = text;
+  }
+
+  function applyController() {
+    if (!window.Controller) return;
+    /* The serial baud rate is a transport setting: it lives under
+       CFG.controller.crsf and is only read when a port is opened. */
+    if (!CFG.controller.crsf) CFG.controller.crsf = {};
+    CFG.controller.crsf.baudRate = settings.controller.baud || 420000;
+    var c = settings.controller;
+    Controller.configure({
+      source: c.source,
+      order: c.order,
+      stickMode: c.stickMode,
+      thrMode: c.thrMode,
+      deadband: c.deadband,
+      travel: c.travel,
+      failsafe: c.failsafe
+    });
+    updateControllerStatus();
+  }
+
   function applyLoadout() {
     if (!window.Loadout) return;
     Loadout.apply(settings.loadout);
@@ -1567,7 +1684,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
   function applySettingsTab(name) {
     const panel = document.getElementById('settings-panel');
     if (!panel) return;
-    const valid = ['GENERAL','CAMERA','FLIGHT','LOADOUT','HUD','TELEM'];
+    const valid = ['GENERAL','CAMERA','FLIGHT','INPUT','LOADOUT','HUD','TELEM'];
     const tabName = (valid.indexOf(name) !== -1) ? name : 'GENERAL';
     panel.querySelectorAll('.sp-tab').forEach(function (t) {
       t.classList.toggle('active', t.getAttribute('data-tab') === tabName);
@@ -1585,6 +1702,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     applyEasyMode();
     applyPhysicsModel();
     applyBatteryMode();
+    applyController();
     applyLoadout();
     applyHudVisibility();
     applyCameraMode();
@@ -1694,6 +1812,30 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         } else if (setting === 'physics') {
           settings.physics = val;
           applyPhysicsModel();
+        } else if (setting === 'ctlSource') {
+          settings.controller.source = val;
+          applyController();
+        } else if (setting === 'ctlOrder') {
+          settings.controller.order = val;
+          applyController();
+        } else if (setting === 'ctlStickMode') {
+          settings.controller.stickMode = val;
+          applyController();
+        } else if (setting === 'ctlThrMode') {
+          settings.controller.thrMode = val;
+          applyController();
+        } else if (setting === 'ctlDeadband') {
+          settings.controller.deadband = parseFloat(val) || 0;
+          applyController();
+        } else if (setting === 'ctlTravel') {
+          settings.controller.travel = parseFloat(val) || 1;
+          applyController();
+        } else if (setting === 'ctlBaud') {
+          settings.controller.baud = parseInt(val, 10) || 420000;
+          applyController();
+        } else if (setting === 'ctlFailsafe') {
+          settings.controller.failsafe = (val === '1');
+          applyController();
         } else if (setting === 'drill') {
         if (window.Drills) {
         if (val === 'none') Drills.end();
@@ -1746,6 +1888,14 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
           else if (setting === 'env') active = (val === settings.env);
           else if (setting === 'batteryMode') active = (val === settings.batteryMode);
           else if (setting === 'physics') active = (val === settings.physics);
+          else if (setting === 'ctlSource') active = (val === settings.controller.source);
+          else if (setting === 'ctlOrder') active = (val === settings.controller.order);
+          else if (setting === 'ctlStickMode') active = (val === settings.controller.stickMode);
+          else if (setting === 'ctlThrMode') active = (val === settings.controller.thrMode);
+          else if (setting === 'ctlDeadband') active = (parseFloat(val) === settings.controller.deadband);
+          else if (setting === 'ctlTravel') active = (parseFloat(val) === settings.controller.travel);
+          else if (setting === 'ctlBaud') active = (parseInt(val, 10) === settings.controller.baud);
+          else if (setting === 'ctlFailsafe') active = ((val === '1') === settings.controller.failsafe);
           else if (setting === 'drill') active = (val === (window.Drills && Drills.isActive() ? Drills.getActiveName() : 'none'));
           else if (setting && setting.indexOf('loadout.') === 0) {
             var _sub = setting.split('.')[1];
@@ -1798,6 +1948,47 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       if (window.Telemetry) Telemetry.clear();
       refreshSegmented();
     });
+
+    /* ------------------- external controller panel ------------------- */
+    var ctlConnect = panel.querySelector('#ctl-connect');
+    if (ctlConnect) ctlConnect.addEventListener('click', function () {
+      if (!window.Controller) return;
+      if (Controller.status().serial.open) {
+        Controller.disconnectSerial();
+        showCtlToast('SERIAL DISCONNECTED');
+        updateControllerStatus();
+        return;
+      }
+      if (!Controller.serialSupported()) {
+        showCtlToast('WEB SERIAL NEEDS CHROME/EDGE ON DESKTOP');
+        updateControllerStatus();
+        return;
+      }
+      /* The port picker needs this click to count as a user gesture. */
+      settings.controller.source = 'CRSF';
+      applyController();
+      refreshSegmented();
+      Controller.connectSerial().catch(function (err) {
+        showCtlToast('SERIAL: ' + ((err && err.message) || 'FAILED'));
+        updateControllerStatus();
+      });
+      setTimeout(updateControllerStatus, 500);
+    });
+
+    var ctlRescan = panel.querySelector('#ctl-rescan');
+    if (ctlRescan) ctlRescan.addEventListener('click', function () {
+      if (window.Controller && Controller._reset) Controller._reset();
+      showCtlToast('PRESS A BUTTON ON THE PAD');
+      setTimeout(updateControllerStatus, 500);
+    });
+
+    /* Live link state while the INPUT tab is up. Cheap: two DOM reads and
+       a text compare four times a second, and only when it is visible. */
+    setInterval(function () {
+      if (panel.classList.contains('hidden')) return;
+      if (settings.tab !== 'INPUT') return;
+      updateControllerStatus();
+    }, 250);
 
     panel.querySelectorAll('.sp-tab').forEach(function (t) {
       t.addEventListener('click', function () {
