@@ -1485,9 +1485,10 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       var graphOn = !!(window.Telemetry && Telemetry.isGraphVisible
         && Telemetry.isGraphVisible());
       tl.classList.toggle('hud-off', !anyVisible && !graphOn);
-      /* Ghost trail visibility */
-      if (window.GhostTrail) GhostTrail.setVisible(!!settings.hud.ghostTrail);
     }
+    /* Ghost trail visibility — independent of the telemetry panel, which
+       may be missing entirely. */
+    if (window.GhostTrail) GhostTrail.setVisible(!!settings.hud.ghostTrail);
   }
   function applyFpsCap() { fpsCap = settings.fpsCap; }
   function applyFpsCounter() {

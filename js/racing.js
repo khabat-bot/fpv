@@ -87,6 +87,10 @@ window.Racing = (function () {
     if (!active) return;
     if (drone.crashed) {
       if (ghostMesh) ghostMesh.visible = false;
+      /* Keep prevPos in step with the wreck: after a respawn the segment
+         from a stale crash-frame position to the spawn pad could cross a
+         gate and start a lap that never happened. */
+      prevPos.copy(drone.position);
       return;
     }
 

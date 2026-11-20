@@ -29,7 +29,10 @@ function resizeStickHUD() {
     const h = stickCanvas.clientHeight;
     stickCanvas.width = w * dpr;
     stickCanvas.height = h * dpr;
-    stickCtx.scale(dpr, dpr);
+    /* setTransform, not scale: the 2D context keeps its transform across
+       resizes, so scale() compounded on every resize/orientation change and
+       the stick readout grew further off-centre each time. */
+    stickCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function drawStickHUD(_stateParam) {
