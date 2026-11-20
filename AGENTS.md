@@ -58,11 +58,14 @@ position and (b) add it to the `DEPENDENCIES` array in main.js (see gotchas).
 
 ### Game loop (main.js)
 
-`frame()` via requestAnimationFrame, at ~line 2115:
+`frame()` via requestAnimationFrame, at ~line 2349:
 
 - FPS cap is a 1.5 ms early-return; `fpsCap: 0` means uncapped.
-- Fixed-timestep physics: 240 Hz on desktop, 120 Hz on mobile, accumulator
-  pattern, `dt` clamped to 0.1 s, max 16 substeps/frame.
+- Fixed-timestep physics: rate derived from the measured display refresh
+  (`displayHz`, rAF-measured with an `update-frequency` seed): one substep per
+  drawn frame on mobile clamped [60, 120] Hz, two per frame on desktop clamped
+  [120, 240] Hz; accumulator pattern, `dt` clamped to 0.1 s, max 16
+  substeps/frame.
 - Per-frame flow: `Input.update(dt)` → state → `drone.step(FIXED, state)` →
   render + `HUD` → `Net.sendState` (~30 Hz) + `MP.update` → `Replay.record`/
   `Replay.update`.
@@ -128,8 +131,13 @@ made in both files to keep them in sync.**
 - **Vendor files are committed** (`vendor/three.min.js` etc., UMD builds that
   attach to `window.THREE`). They're loaded from `file://` too — keep it plain
   script tags, no ES modules.
-- **Quality presets are DPR-only**: LOW/MED/HIGH = devicePixelRatio 1.0/1.5/2.0;
-  default is MED on mobile, HIGH on desktop (mobile detected via user-agent).
+- **Quality presets are fractions of the measured backing ratio**: LOW/MED/HIGH
+  = 50/75/100% of the ratio the canvas backing store actually reaches at native
+  resolution (`measureNativeRatio()` in main.js reads `canvas.width /
+  clientWidth` after sizing at the reported DPR, catching GPUs that clamp
+  below `devicePixelRatio`). Absolute caps (auto-degrade, heavy maps) resolve
+  as `min(cap, nativeRatio)`. Default is MED on mobile, HIGH on desktop
+  (mobile detected via user-agent).
 - The two servers differ slightly: the Rust one honors `FPV_ROOT`; Python always
   serves from its own directory. Python previously had a TCP bug that dropped
   static responses mid-stream (that's what the boot guard protects against).

@@ -206,6 +206,7 @@ window.Drone = (function () {
 
     const thr = this.armed ? Math.max(0, Math.min(1, input.throttle)) : 0;
     this.throttleIn = thr;
+    this._stepDt = dt;
     this._windTime = (this._windTime || 0) + dt;
     this._groundedTime = Math.max(0, (this._groundedTime || 0) - dt);
     this._dmgCooldown = Math.max(0, (this._dmgCooldown || 0) - dt);
@@ -908,8 +909,8 @@ Drone.prototype._collideBVH = function() {
   var sweepDist = Math.sqrt(dx*dx + dy*dy + dz*dz);
 
   /* CCD: if the sweep is more than ~1.5x the smallest sphere radius,
-     sub-step. Threshold 0.03 matches the motor sphere radius; cap at 6
-     substeps to bound cost (~54 shapecasts at worst case). */
+     sub-step. Threshold 0.03 matches the motor sphere radius; the cap
+     (below) bounds cost: 6 substeps at 120 Hz steps, 12 at 60 Hz. */
   var substeps = 1;
   /* CCD only fires when actually sweeping fast. Below ~5 m/s the
      per-step displacement is smaller than the smallest sphere radius,
@@ -919,8 +920,13 @@ Drone.prototype._collideBVH = function() {
   var speedNow = this.velocity.length();
   var _ssCCD = this._sphereScale || 1.0;
   var _ccdGate = 0.03 * _ssCCD;
+  /* Cap scales with the physics step size: at a 60 Hz step (mobile
+     panels) each substep covers 2x the distance of a 120 Hz one, so
+     double the cap to keep the per-substep resolution (and thus the
+     anti-tunnelling margin) the same. */
+  var _ccdCap = (this._stepDt || 1 / 240) > 1 / 120 + 1e-6 ? 12 : 6;
   if (sweepDist > _ccdGate && speedNow > 5.0) {
-    substeps = Math.min(6, Math.ceil(sweepDist / _ccdGate));
+    substeps = Math.min(_ccdCap, Math.ceil(sweepDist / _ccdGate));
   }
 
   if (substeps === 1) {
