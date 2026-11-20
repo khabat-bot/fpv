@@ -1,8 +1,9 @@
 # AGENTS.md — FPV Sim
 
-Browser-based FPV drone acro trainer (vanilla JS + Three.js). No build system, no
-bundler, no tests. A single static site plus a small static+WebSocket server for
-multiplayer and map sharing. Everything runs from a plain HTTP server on port 8080.
+Browser-based FPV drone acro trainer (vanilla JS + Three.js). No build system and
+no bundler; a dependency-free test suite lives in `tests/`. A single static site
+plus a small static+WebSocket server for multiplayer and map sharing. Everything
+runs from a plain HTTP server on port 8080.
 
 ## Commands
 
@@ -13,8 +14,20 @@ rustc -O server.rs -o rust-server
 ./rust-server
 ```
 
-Then open `http://localhost:8080`. There is no build step, no test runner, no
-linter — verification is manual in a browser.
+Then open `http://localhost:8080`. There is no build step and no linter.
+
+Run the tests before and after a change (no installs needed — Node 18+ and
+Python 3 stdlib only):
+
+```sh
+./tests/run.sh          # everything
+./tests/run.sh js       # browser modules: node --test tests/js
+./tests/run.sh py       # server: python3 -m unittest discover -s tests/python
+```
+
+`tests/README.md` explains the VM harness and what each file covers. Adding a
+`js/` module without updating `index.html` (and `main.js` `DEPENDENCIES`) now
+fails `tests/js/structure.test.js` instead of only failing in a browser.
 
 - Env vars: `PORT` (8080), `HOST` (0.0.0.0), `FPV_MAP_DIR` (/tmp, where shared
   GLB maps are stored). Rust-only: `FPV_ROOT` (directory to serve; defaults to cwd).
@@ -166,5 +179,8 @@ made in both files to keep them in sync.**
 - All flight-model numbers live in `js/config.js` (`window.CFG`); tunable
   behavior changes should go there, not inline.
 - Server code is stdlib-only by design (no pip, no crates) — keep it that way.
+- Tests are stdlib-only too: `node:test` + a small VM harness (no jsdom/npm),
+  `python3 -m unittest` (no pytest). New flight-model or protocol behaviour
+  should land with a test; server tests must keep `server.py`/`server.rs` in sync.
 - Server constants are deliberately mirrored between `server.py` and `server.rs`
   (WS_MAGIC, limits, timeouts) — change both.
