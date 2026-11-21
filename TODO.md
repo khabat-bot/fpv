@@ -1,5 +1,14 @@
 # TODO
 
+## How to read this file
+
+An unchecked box is *not* automatically a bug: sections 5 and 6 are planned
+features and hardening, not defects. "Fix the bugs in the TODO" means lines
+that describe something demonstrably broken; anything else is new work. A
+fixed defect is ticked with a note naming the code path and the test that
+covers it, so that a stale claim is visible instead of silently misdirecting
+the next change.
+
 ## Done
 
 - FIXED: two errors sometimes happen when first opening the page:
@@ -228,9 +237,23 @@ log is one flight and disarmed bench time never pushes the flight out.
 
 ### 8. Engineering
 
-- [ ] Unit tests + CI: physics, net protocol, loadout math
-      (no tests exist at all)
-- [ ] Server protocol parity tests between `server.py` and `server.rs`
+- [x] Unit tests + CI: physics, net protocol, loadout math
+      `tests/` is a dependency-free suite (`node --test` + `python3 -m
+      unittest`, no installs): physics, CRSF/gamepad input, racing, loadout,
+      net client, replay storage, plus the server's HTTP endpoints and WS
+      relay. `./tests/run.sh` runs both halves; `.github/workflows/tests.yml`
+      runs it on every push and pull request, and compiles `server.rs`.
+- [x] Server protocol parity tests between `server.py` and `server.rs`
+      Two layers. `test_server.py::ParityTest` pins the mirrored constants,
+      endpoints and message names as source text. `test_server_parity.py`
+      runs the same scenarios against both real servers on private ports —
+      static/HTTP endpoints, room lifecycle and host migration, room limits,
+      state relay and sanitising, state rate limiting, map upload/fetch/
+      cleanup and the oversized-frame drop — and compares only normalised
+      client-visible observations, so a clamp, an error string or a missing
+      broadcast that drifts between the ports fails the suite. It compiles
+      `server.rs` with `rustc`; without a toolchain it skips locally and
+      fails under CI.
 - [ ] Protocol spec doc derived from the server.py docstring, kept in sync
       with both servers
 

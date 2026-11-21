@@ -25,6 +25,12 @@ Python 3 stdlib only):
 ./tests/run.sh py       # server: python3 -m unittest discover -s tests/python
 ```
 
+`tests/python/test_server_parity.py` runs the same scenarios against a real
+`server.py` and a compiled `server.rs`, so a behavioural drift between the two
+ports fails instead of only a changed constant. It builds `server.rs` with
+`rustc` (skips when no toolchain is installed; fails under `CI`). Point
+`FPV_RUST_SERVER` at a binary to skip the build.
+
 `tests/README.md` explains the VM harness and what each file covers. Adding a
 `js/` module without updating `index.html` (and `main.js` `DEPENDENCIES`) now
 fails `tests/js/structure.test.js` instead of only failing in a browser.

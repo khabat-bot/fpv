@@ -26,6 +26,11 @@ jobs:
         with:
           python-version: '3.12'
 
+      # tests/python/test_server_parity.py compiles server.rs and runs it next
+      # to server.py; without rustc it fails under CI instead of skipping.
+      - name: Show rustc version
+        run: rustc --version
+
       - name: Run tests
         run: ./tests/run.sh
 
