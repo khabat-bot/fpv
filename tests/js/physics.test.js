@@ -410,6 +410,52 @@ test('the rate setpoint lag applies to the legacy plants only', () => {
   CFG.physics.sixDof = false;
 });
 
+test('rotor plant: props lose thrust and gain drag torque with airspeed', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone, 30);
+  const still = d._propAxialFactors(0);
+  assert.equal(still.ct, 1, 'static thrust must be the calibrated point');
+  assert.equal(still.cq, 1, 'static drag torque must be the calibrated point');
+
+  /* 20 m/s on a 5" prop at hover RPM is J ≈ 0.35: real props lose
+     about a quarter of their static thrust there. */
+  const cruise = d._propAxialFactors(0.35);
+  assert.ok(cruise.ct > 0.70 && cruise.ct < 0.80,
+    'expected ~20-30 % thrust loss at J=0.35, got ' + cruise.ct.toFixed(2));
+  assert.ok(cruise.cq > 1.15,
+    'drag torque should rise with inflow, got ' + cruise.cq.toFixed(2));
+  assert.equal(d._propAxialFactors(still.jZero).ct, 0,
+    'no thrust at the zero-thrust advance ratio');
+});
+
+test('rotor plant: the vortex-ring band costs thrust on a slow descent', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone, 30);
+  const slow = d._propAxialFactors(-0.05).ct;
+  const vrs  = d._propAxialFactors(-0.25).ct;
+  const fast = d._propAxialFactors(-0.8).ct;
+  assert.ok(vrs < 0.85, 'VRS should cost ~30 % of thrust, got ' + vrs.toFixed(2));
+  assert.ok(vrs < slow, 'descending into the wake is worse than a gentle descent');
+  assert.ok(fast > vrs, 'a fast descent leaves the ring');
+  assert.ok(fast <= 1.15 + 1e-9, 'reverse inflow must not be free thrust: ' + fast.toFixed(2));
+});
+
+test('rotor plant: climbing at speed costs real thrust', () => {
+  const { Drone } = setup();
+  function thrustAt(vy) {
+    const d = airborne(Drone, 30);
+    fly(d, 0.5, 1 / 240, input({ throttle: 0.5 }));
+    d.velocity.y = vy;
+    fly(d, 0.02, 1 / 240, input({ throttle: 0.5 }));
+    return d._thrustState;
+  }
+  const hover = thrustAt(0);
+  const climb = thrustAt(12);
+  const ratio = climb / hover;
+  assert.ok(ratio > 0.74 && ratio < 0.86,
+    'climbing at 12 m/s should cost ~20 % thrust, got ' + (ratio * 100).toFixed(0) + '%');
+});
+
 test('reset() restores spawn state after a crash', () => {
   const { CFG, Drone } = setup();
   const d = airborne(Drone);

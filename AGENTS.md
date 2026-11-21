@@ -59,7 +59,8 @@ vendor/three.min.js, three-mesh-bvh.umd.js, GLTFLoader.js, BufferGeometryUtils.j
 js/config.js → CFG           (every flight-model tunable lives here)
 js/audio.js  → SimAudio      (procedural Web Audio, no sound files)
 js/world.js  → World         (procedural scenery; returns heightAt(x,z) for collision)
-js/physics.js→ Drone         (acro quad: rotor plant with a real rate PID by
+js/physics.js→ Drone         (acro quad: rotor plant with a real rate PID and
+                              advance-ratio prop curves (Ct(J)/Cq(J), VRS) by
                               default, rate loop and 6-DOF legacy models +
                               LiPo model)
 js/controller.js → Controller (external gamepad / CRSF RC input; feeds Input)

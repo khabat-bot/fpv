@@ -79,6 +79,11 @@ window.PARTS = {
      CT      = 0.1238 × (pitchIn/diameterIn) × (D_m/0.12954)^0.5
      thrust  = CT × 1.225 × n² × D_m⁴ × machFactor × bladeFactor × reynolds
 
+   The coefficients above are the static (J = 0) values. propAxialCoeffs()
+   publishes the advance-ratio shape for the chosen prop (how fast Ct falls
+   with inflow and how much Cq climbs), which the rotor plant uses to scale
+   thrust and prop reaction torque with airspeed. See js/physics.js.
+
    Saturation corrections:
      machFactor     drops as tip speed passes Mach 0.6 (real props)
      bladeFactor    0.88 for 2-blade, 1.08 for 4-blade, 1.0 for 3-blade
@@ -138,8 +143,39 @@ function computeMotorThrust(motor, prop, battery) {
     noLoadRpm: noLoadRPM,
     torqueCapRpm: torqueCapRPM,
     tipMach: tipMach,
-    limited: rpm < noLoadRPM * 0.9
+    limited: rpm < noLoadRPM * 0.9,
+    aero: propAxialCoeffs({ diameterIn: diameterIn, pitchIn: pitchIn, blades: blades })
   };
+}
+
+/* =========================================================================
+   propAxialCoeffs(prop)
+   ---------------------------------------------------------------------
+   Advance-ratio shape for one prop, relative to its static coefficients
+   (the absolute Ct/Cq at J = 0 are already folded into CFG.maxThrust by
+   the loadout, so the rotor plant only needs the ratios).
+
+     jZero    advance ratio J = V_axial / (n·D) at which thrust reaches
+              zero. Falls roughly linearly from the static value; a
+              higher-pitch prop pulls to a higher J, more blades choke the
+              disc sooner, a bi-blade is the most efficient at speed.
+     cqSlope  relative rise of the drag-torque coefficient per unit J. A
+              steeper prop and more blades put more blade area in the
+              stream, so Cq climbs faster.
+
+   The plant evaluates Ct(J)/Ct(0) and Cq(J)/Cq(0) from these; VRS and the
+   small reverse-inflow gain are shared curve shape, not per-prop.
+   ========================================================================= */
+function propAxialCoeffs(prop) {
+  const diameterIn = (prop && typeof prop.diameterIn === 'number') ? prop.diameterIn : 5.1;
+  const pitchIn    = (prop && typeof prop.pitchIn    === 'number') ? prop.pitchIn    : 4.0;
+  const blades     = (prop && typeof prop.blades     === 'number') ? prop.blades     : 3;
+  const D_m        = diameterIn * 0.0254;
+  const pitchRatio = pitchIn / diameterIn;
+  const jZero      = Math.max(0.5, Math.min(2.6,
+                       1.8 * pitchRatio * (blades === 2 ? 1.08 : 1.0)));
+  const cqSlope    = Math.max(0.2, (0.5 + 0.05 * blades) * (pitchRatio / 0.7843));
+  return { diameterM: D_m, jZero: jZero, cqSlope: cqSlope };
 }
 
 window.Loadout = (function () {
