@@ -523,14 +523,14 @@ window.Drone = (function () {
     /* Mixer. With motors at (±arm, ±arm), a roll differential δ gives
        τz = -maxT·arm·δ, a pitch differential τx = -maxT·arm·δ, and yaw
        comes from the prop reaction torque τy = -qLen·Σ spin·T. */
-    const dRoll  = this.armed ? -tqz / (maxT * arm) : 0;
-    const dPitch = this.armed ? -tqx / (maxT * arm) : 0;
-    const dYaw   = this.armed ? -tqy / (qLen * maxT) : 0;
-
     /* X-frame motor layout: FR, FL, RR, RL. */
     const MX   = [ arm, -arm,  arm, -arm];
     const MZ   = [-arm, -arm,  arm,  arm];
     const SPIN = [1, -1, -1, 1];   /* diagonal pairs counter-rotate */
+
+    let dRoll  = this.armed ? -tqz / (maxT * arm) : 0;
+    let dPitch = this.armed ? -tqx / (maxT * arm) : 0;
+    const dYawDemand = this.armed ? -tqy / (qLen * maxT) : 0;
 
     /* Damage: the dead corner's prop makes only (1 - asymmetry) of its
        thrust, so the airframe rolls/pitches toward that corner for real
@@ -545,6 +545,50 @@ window.Drone = (function () {
     const dmg = [1, 1, 1, 1];
     if (asym > 0 && corner >= 0 && corner < 4) dmg[corner] = 1 - asym;
 
+    const airmode = (pid.airmode !== false);
+    const airIdle = (pid.airmodeIdle != null) ? pid.airmodeIdle : 0.03;
+
+    /* Mixer allocation. The three axes share one band of motor travel, and
+       each motor command is the SUM of their demands. Clipping every motor
+       on its own distorts the torque vector: a saturated yaw demand (yaw
+       has by far the least authority, since it is only prop drag torque)
+       turns into a diagonal thrust differential, which is a big roll/pitch
+       torque nobody asked for. That is the airframe slowly rolling away
+       after a yaw + roll/pitch input. So the mixer allocates instead of
+       clipping:
+         - roll/pitch take the band first, scaled together if they alone do
+           not fit, so their direction is unchanged;
+         - yaw gets only the band left over — the same priority a real
+           mixer gives the strong axes. */
+    const rp = [0, 0, 0, 0];
+    let rpMin = Infinity, rpMax = -Infinity;
+    for (let i = 0; i < 4; i++) {
+      rp[i] = dRoll * (-MX[i] / arm) + dPitch * (MZ[i] / arm);
+      if (rp[i] < rpMin) rpMin = rp[i];
+      if (rp[i] > rpMax) rpMax = rp[i];
+    }
+    let allocSat = 0;
+    if (rpMax - rpMin > 1) {
+      const k = 1 / (rpMax - rpMin);
+      dRoll *= k;
+      dPitch *= k;
+      rpMin = Infinity; rpMax = -Infinity;
+      for (let i = 0; i < 4; i++) {
+        rp[i] = dRoll * (-MX[i] / arm) + dPitch * (MZ[i] / arm);
+        if (rp[i] < rpMin) rpMin = rp[i];
+        if (rp[i] > rpMax) rpMax = rp[i];
+      }
+      allocSat = 1;
+    }
+    /* Airmode can lift the collective so the weakest motor still turns;
+       that lift is what the band left for yaw is measured against. */
+    const yawRoom = Math.max(0, (1 - airIdle - (rpMax - rpMin)) * 0.5);
+    let dYaw = dYawDemand;
+    if (Math.abs(dYaw) > yawRoom) {
+      dYaw = (dYaw < 0) ? -yawRoom : yawRoom;
+      allocSat = 1;
+    }
+
     /* Airmode: a differential demand larger than the collective would
        drive a motor below zero and the mixer would clip it, so the quad
        loses that corner's torque — that is why a quad without airmode
@@ -555,13 +599,9 @@ window.Drone = (function () {
     const diff = [0, 0, 0, 0];
     let minDiff = 0;
     for (let i = 0; i < 4; i++) {
-      diff[i] = dRoll  * (-MX[i] / arm)
-              + dPitch * ( MZ[i] / arm)
-              + dYaw   * SPIN[i];
+      diff[i] = rp[i] + dYaw * SPIN[i];
       if (diff[i] < minDiff) minDiff = diff[i];
     }
-    const airmode = (pid.airmode !== false);
-    const airIdle = (pid.airmodeIdle != null) ? pid.airmodeIdle : 0.03;
     let collectiveOut = collective + (this._agBoost || 0);
     if (this.armed && airmode && minDiff < 0) {
       collectiveOut = Math.max(collectiveOut, airIdle - minDiff);
@@ -645,7 +685,7 @@ window.Drone = (function () {
        torque the quad cannot deliver, and pays it back as overshoot. A
        real FC gets the same protection from running its loop far faster
        than the motors; this is the explicit version. */
-    this._mixerSat = clipped;
+    this._mixerSat = clipped || allocSat;
   };
 
   Drone.prototype.step = function (dt, input) {
