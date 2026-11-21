@@ -169,8 +169,8 @@ are migrated by `applyPhysicsModel()` in `js/main.js`.
       independent fudges. Yaw comes from prop reaction torque (τy = −qLen·Σ
       spin·T), not from a torque cap. The result acts on the body inertia
       tensor with the ω × Iω gyroscopic term and per-rotor gyroscopic torque,
-      and a filtered D-term on the gyro rate (`rotor.rateDamping`) damps the
-      motor-lag overshoot the way a real rate PID does. The RPM ceiling is
+      and a per-axis rate PID (`rotor.pid`, see below) damps the motor-lag
+      overshoot the way a real rate PID does. The RPM ceiling is
       the loadout's prop model (`thrustInfo.rpm` from `js/parts.js`);
       `rotor.maxRpm` is only a fallback.
 - [x] Motor/ESC response lag and rotor inertia (rate ramps, not instant)
@@ -223,17 +223,34 @@ The rotor plant is a real rigid body now, but several layers a physical quad
 has are still missing or scripted. These are ordered by how much they change
 what the sticks feel like; each one lands on its own with tests.
 
-- [ ] Real rate PID: P/I/D + feedforward instead of the first-order rate lag
-      `_stepRotors()` currently turns the rate error into an angular
-      acceleration (`error / CFG.angResponse`) and adds one filtered D-term
-      (`rotor.rateDamping`). There is no integral term, so a CG offset, a bent
-      prop, a damaged motor or a steady wind leaves a permanent attitude
-      offset instead of being trimmed away, and no feedforward, so stick
-      transients lag. Replace it with per-axis P/I/D + FF on the gyro rate (D
-      low-pass, I windup limit, `iterm_relax`, anti-gravity, airmode), with
-      the mixer moved behind it. Without airmode the mixer clamps at zero
-      collective and rotational authority disappears at low throttle, which is
-      why the current model has no airmode at all.
+- [x] Real rate PID: P/I/D + feedforward instead of the first-order rate lag
+      `_stepRotors()` runs a per-axis PID on the gyro rate, in
+      angular-acceleration units so the sticks stay calibrated against
+      `CFG.angResponse` (`rotor.pid`): P + I + FF − D, where D differentiates
+      the measured rate (not the error) and is low-passed (`dLpf`), FF feeds
+      the low-passed setpoint slew forward, and the I-term is clamped to a
+      share of `angAccelMax` (`itermLimit`) so it can never wind up torque the
+      props cannot deliver. `itermRelax` suppresses integration while the
+      setpoint is slewing, and conditional integration (`itermSatRelax`) stops
+      it while the mixer is clipped, which is the protection a real FC gets
+      from running its loop far faster than the motors. Because the PID now
+      shapes the approach, the 15 ms `esc.rateLag` is skipped in REAL (the
+      legacy plants still use it).
+      The I-term is what trims: with a motor down the loop holds zero rate and
+      the three good corners carry the dead one, where P alone flies with a
+      permanent rate offset.
+- [x] Airmode behind the mixer
+      The mixer computes the differential first, then airmode lifts the
+      collective so the weakest motor stays at `airmodeIdle` instead of being
+      clipped to zero. Without it a zero-throttle roll has two dead motors and
+      almost no thrust; with it the quad keeps both. Anti-gravity
+      (`antiGravity`, `antiGravityDecay`) adds a short collective kick on a
+      throttle jab so a punch-out does not sag while the I-term winds up.
+      In REAL the throttle/`motorAuthority` and damage `authorityScale`
+      discounts on the rate target are gone as well: airmode supplies the
+      low-throttle authority and the per-motor thrust loss supplies the damage
+      authority, so scaling the target on top would count both twice. The
+      legacy plants keep both.
 - [ ] Prop thrust and torque vs advance ratio (airspeed), not just RPM²
       `T = (maxThrust/4)·n²` and `Q = torqueLength·T` hold at every airspeed,
       so the quad has no top-speed wall and never loses thrust in a dive. Real

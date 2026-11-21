@@ -75,10 +75,43 @@ window.CFG = {
          prop with the motor de-energised. */
       spinUp: 0.045,
       spinDown: 0.045,
-      /* D-term on the gyro rate, seconds. The motor lag would otherwise
-         overshoot the commanded rate; a real rate PID damps it the same
-         way. 0 disables. */
-      rateDamping: 0.030
+
+      /* ---- rate PID (the loop a real flight controller runs) --------
+         The output is an angular-acceleration demand; P is scaled so the
+         sticks stay calibrated against `angResponse` (kp = 1.0 reproduces
+         the old 1/angResponse gain), so these numbers read like a Betaflight
+         tune rather than raw SI gains.
+           kp:                 P multiplier on 1/angResponse
+           ki:                 1/s² — I gain per (rad/s) of error held
+           kd:                 s — D gain per (rad/s²) of gyro derivative
+           ff:                 s — feedforward per (rad/s²) of setpoint slew
+           dLpf / ffLpf:       s — low-pass on the gyro derivative and on
+                               the setpoint derivative
+           itermLimit:         fraction of angAccelMax the I-term may supply
+                               (also the windup clamp)
+           itermRelax:         0..1 — how much I accumulation is suppressed
+                               while the setpoint is slewing
+           itermRelaxCutoff:   rad/s² of setpoint slew where relax starts
+           antiGravity:        collective added per unit of throttle change
+           antiGravityDecay:   s — how fast that kick fades
+           airmode:            keep the mixer's differential alive at low
+                               collective by lifting the weakest motor to
+                               airmodeIdle; airmodeIdle is that floor. */
+      pid: {
+        kp: 1.0,
+        ki: 25,
+        kd: 0.030,
+        ff: 0.012,
+        dLpf: 0.010,
+        ffLpf: 0.020,
+        itermLimit: 0.55,
+        itermRelax: 0.75,
+        itermRelaxCutoff: 90,
+        antiGravity: 0.35,
+        antiGravityDecay: 0.06,
+        airmode: true,
+        airmodeIdle: 0.03
+      }
     }
   },
 
@@ -95,7 +128,11 @@ window.CFG = {
      available at 0 throttle, 100% at full. yaw: 0.45 means yaw is
      deliberately weaker at low throttle (physically correct — yaw comes
      from prop drag torque, which vanishes at low RPM). Set both to 1.0
-     to fully disable coupling. */
+     to fully disable coupling.
+     Only the legacy plants (6-DOF, RATE) use this: in the rotor plant
+     airmode gives the low-throttle authority and the rate PID holds the
+     rate the sticks ask for, so discounting the target too would count
+     the same effect twice. */
   feel: {
     motorAuthority: { rollPitch: 0.65, yaw: 0.45 }
   },
