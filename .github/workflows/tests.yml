@@ -1,0 +1,47 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run tests
+        run: ./tests/run.sh
+
+  rust:
+    name: Compile server.rs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show rustc version
+        run: rustc --version
+
+      # No Cargo project: server.rs is a single file, and a warning-free
+      # compile is the only check that the Rust port still builds.
+      - name: Compile
+        run: rustc -O server.rs -o rust-server
+
+      - name: Verify binary
+        run: test -x rust-server
