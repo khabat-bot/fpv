@@ -286,6 +286,15 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(server.clean_vec([1e9, -1e9, 0], 3, 10.0), [10.0, -10.0, 0.0])
         self.assertEqual(server.clean_vec((1, 2, 3, 4), 3), [1.0, 2.0, 3.0])
 
+    def test_frame_json_refuses_non_finite_numbers(self):
+        self.assertEqual(
+            server.frame_json({'p': [1.0, 2.0, 3.0]}),
+            b'{"p":[1.0,2.0,3.0]}')
+        self.assertIsNone(server.frame_json({'p': [float('nan'), 0.0, 0.0]}))
+        self.assertIsNone(server.frame_json({'p': [float('inf'), 0.0, 0.0]}))
+        self.assertIsNone(server.frame_json({'v': [0.0, float('-inf'), 0.0]}))
+        self.assertIsNone(server.frame_json({'q': [0.0, 0.0, 0.0, float('nan')]}))
+
     def test_generated_ids_have_the_expected_shape(self):
         for _ in range(50):
             self.assertRegex(server.gen_code(), r'^[A-Z0-9]{6}$')
@@ -647,6 +656,20 @@ class WebSocketProtocolTest(ServerTestCase):
 
         guest.send({'t': 'state', 'p': ['x', 0, 0], 'q': [0, 0, 0, 1]})
         guest.send({'t': 'state', 'p': [0, 0, 0]})                 # no quaternion
+        host.expect_silence()
+
+        guest.send({'t': 'ping', 'ts': 5})
+        self.assertEqual(guest.recv_json()['t'], 'pong')
+
+    def test_state_with_non_finite_vector_is_dropped(self):
+        host, created = self.create_room()
+        guest, _ = self.join_room(created['room'])
+        host.recv_json()
+
+        # json.loads accepts the NaN/Infinity literals; the relay must not.
+        guest.send({'t': 'state', 'p': [float('nan'), 0, 0], 'q': [0, 0, 0, 1]})
+        guest.send({'t': 'state', 'p': [0, float('inf'), 0], 'q': [0, 0, 0, 1]})
+        guest.send({'t': 'state', 'p': [0, 0, 0], 'q': [0, 0, 0, float('-inf')]})
         host.expect_silence()
 
         guest.send({'t': 'ping', 'ts': 5})

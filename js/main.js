@@ -1613,6 +1613,28 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     if (el.textContent !== text) el.textContent = text;
   }
 
+  /* The INPUT-tab link poller only runs while the settings panel is open: it
+     is started on open and clears itself once the panel is hidden, so no
+     interval is left running for the life of the tab. */
+  var ctlStatusTimer = 0;
+  function startCtlStatusPoller() {
+    if (ctlStatusTimer) return;
+    ctlStatusTimer = setInterval(function () {
+      var panel = document.getElementById('settings-panel');
+      if (!panel || panel.classList.contains('hidden')) {
+        stopCtlStatusPoller();
+        return;
+      }
+      if (settings.tab !== 'INPUT') return;
+      updateControllerStatus();
+    }, 250);
+  }
+  function stopCtlStatusPoller() {
+    if (!ctlStatusTimer) return;
+    clearInterval(ctlStatusTimer);
+    ctlStatusTimer = 0;
+  }
+
   function applyController() {
     if (!window.Controller) return;
     /* The serial baud rate is a transport setting: it lives under
@@ -1748,11 +1770,15 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     if (!panel) { console.warn('settings-panel missing in HTML'); return; }
 
     panel.addEventListener('click', function (e) {
-      if (e.target === panel) panel.classList.add('hidden');
+      if (e.target === panel) {
+        panel.classList.add('hidden');
+        stopCtlStatusPoller();
+      }
     });
     var closeBtn = panel.querySelector('#sp-close');
     if (closeBtn) closeBtn.addEventListener('click', function () {
       panel.classList.add('hidden');
+      stopCtlStatusPoller();
     });
 
     panel.querySelectorAll('.sp-group').forEach(function (group) {
@@ -1983,13 +2009,6 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       setTimeout(updateControllerStatus, 500);
     });
 
-    /* Live link state while the INPUT tab is up. Cheap: two DOM reads and
-       a text compare four times a second, and only when it is visible. */
-    setInterval(function () {
-      if (panel.classList.contains('hidden')) return;
-      if (settings.tab !== 'INPUT') return;
-      updateControllerStatus();
-    }, 250);
 
     panel.querySelectorAll('.sp-tab').forEach(function (t) {
       t.addEventListener('click', function () {
@@ -2005,6 +2024,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
         refreshSegmented();
         applySettingsTab(settings.tab || 'GENERAL');
         panel.classList.remove('hidden');
+        startCtlStatusPoller();
       });
     }
   }

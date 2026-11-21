@@ -174,12 +174,13 @@ impl Json {
             Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
             Json::Int(n) => out.push_str(&n.to_string()),
             Json::Float(f) => {
-                if f.is_nan() {
-                    out.push_str("NaN");
-                } else if f.is_infinite() {
-                    out.push_str(if *f > 0.0 { "Infinity" } else { "-Infinity" });
-                } else {
+                // NaN/Infinity are not valid JSON (a peer's JSON.parse would
+                // throw), so anything non-finite goes out as null. The state
+                // path already rejects them via clean_vec.
+                if f.is_finite() {
                     out.push_str(&format!("{:?}", f));
+                } else {
+                    out.push_str("null");
                 }
             }
             Json::Str(st) => write_json_str(st, out),
@@ -538,6 +539,18 @@ fn clean_vec(value: Option<&Json>, count: usize, limit: f64) -> Option<Vec<f64>>
 
 fn floats(v: Vec<f64>) -> Json {
     Json::Arr(v.into_iter().map(Json::Float).collect())
+}
+
+/// True when every number in the message is finite, so `to_json` cannot emit a
+/// non-JSON NaN/Infinity token. `clean_vec` already guarantees this for the
+/// state vectors; this is the framing backstop for any future writer.
+fn json_is_finite(v: &Json) -> bool {
+    match v {
+        Json::Float(f) => f.is_finite(),
+        Json::Arr(a) => a.iter().all(json_is_finite),
+        Json::Obj(o) => o.iter().all(|(_, v)| json_is_finite(v)),
+        _ => true,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1085,7 +1098,11 @@ fn ws_loop(
 
                 // Serialize once, fan the same bytes out to each peer
                 // (outside the global lock).
-                let frame = jobj(pairs).to_json().into_bytes();
+                let frame_obj = jobj(pairs);
+                if !json_is_finite(&frame_obj) {
+                    continue;
+                }
+                let frame = frame_obj.to_json().into_bytes();
                 let peers: Vec<Writer> = {
                     let g = lk(rooms());
                     match g.get(&rid) {
