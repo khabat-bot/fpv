@@ -361,6 +361,34 @@ test('rotor plant: airmode keeps the weakest motor off the stop', () => {
     + on.thrust.toFixed(2) + ' N vs ' + off.thrust.toFixed(2) + ' N');
 });
 
+test('rotor plant: a saturated yaw demand does not roll or pitch the airframe', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone, 30);
+  /* Yaw authority comes only from prop drag torque, so the yaw demand is
+     the first to saturate. Clipping each motor on its own used to turn
+     the excess into a diagonal thrust differential — a big roll/pitch
+     torque the pilot never asked for. */
+  fly(d, 0.6, 1 / 240, input({ throttle: 0.55, yaw: 1 }));
+  const cross = Math.max(Math.abs(d.angVel.x), Math.abs(d.angVel.z));
+  assert.ok(cross < 0.4,
+    'pure yaw should stay pure: ' + cross.toFixed(2) + ' rad/s of roll/pitch');
+  assert.ok(Math.abs(d.angVel.y) > 2,
+    'yaw still has to work: ' + d.angVel.y.toFixed(2) + ' rad/s');
+});
+
+test('rotor plant: centring the sticks stops a combined roll/pitch/yaw manoeuvre', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone, 30);
+  /* The mixer used to clip the saturated yaw differential into a roll
+     torque, which then fed back through the rate loop and left the quad
+     rolling away on its own long after the sticks were centred. */
+  fly(d, 0.8, 1 / 240, input({ throttle: 0.7, roll: 1, pitch: 1, yaw: 1 }));
+  fly(d, 0.6, 1 / 240, input({ throttle: 0.55 }));
+  const rate = d.angVel.length();
+  assert.ok(rate < 0.5,
+    'the rate loop should have stopped the rotation, got ' + rate.toFixed(2) + ' rad/s');
+});
+
 test('rotor plant: anti-gravity adds collective on a throttle jab', () => {
   const { CFG, Drone } = setup();
   const pid = CFG.physics.rotor.pid;
