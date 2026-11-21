@@ -8,9 +8,11 @@
      • optional 6-DOF plant: rate error → motor torque → inertia tensor,
        with gyro drift on the rate estimate (CFG.physics.sixDof)
      • full rotor plant (default, CFG.physics.model 'ROTOR'): four motor
-       speeds → per-prop thrust (∝ RPM²) and reaction torque → rigid-body
-       inertia, with the ESC spin-up/down lag, a geometric mixer, mixer
-       saturation, gyroscopic coupling and thrust-based current draw
+       speeds → per-prop thrust (Ct(J), ∝ RPM² below the static point) and
+       reaction torque (Cq(J)) → rigid-body inertia, with the ESC
+       spin-up/down lag, advance-ratio loss with airspeed, a geometric
+       mixer, mixer saturation, gyroscopic coupling and thrust-based
+       current draw
      • progressive damage: staged thrust/authority loss, asymmetric thrust
        from a dead corner, and a tremor that grows with the damage
    ========================================================================= */
@@ -23,6 +25,26 @@ window.Drone = (function () {
   function curve(x, expo) {
     const c = x < -1 ? -1 : (x > 1 ? 1 : x);
     return (1 - expo) * c + expo * c * c * c;
+  }
+
+  /* Prop coefficients relative to the static point, as a function of the
+     advance ratio J = V_axial / (n·D). J > 0 is inflow along the thrust
+     axis — a climb, or forward flight once the airframe is tilted — and
+     Ct falls toward zero at jZero while the drag torque rises. J < 0 is
+     descent into the disc: a slow descent gains a little thrust because
+     the prop is windmilling into clean air, but around J ≈ -0.25 the prop
+     sits in its own wake (vortex-ring state), where it loses ~30 % until
+     the descent is fast enough to leave the ring. */
+  function propCtFactor(J, a) {
+    if (J >= 0) return Math.max(0, 1 - J / a.jZero);
+    const u = -J;
+    const dip = Math.exp(-0.5 * Math.pow((u - a.vrsCenter) / a.vrsWidth, 2));
+    return Math.min(a.ctRevMax, (1 + a.ctRevGain * u) * (1 - a.vrsDepth * dip));
+  }
+
+  function propCqFactor(J, a) {
+    const f = (J >= 0) ? (1 + a.cqSlope * J) : (1 + a.cqRevSlope * -J);
+    return Math.min(a.cqMax, f);
   }
 
   function Drone() {
@@ -48,6 +70,8 @@ window.Drone = (function () {
     this._tmpV   = new THREE.Vector3();
     this._tmpQ   = new THREE.Quaternion();
     this._up     = new THREE.Vector3();
+    this._bodyVel = new THREE.Vector3();   /* world velocity in body axes */
+    this._qInv    = new THREE.Quaternion();
 
     this._wobAmp = 0;
     this._wobPhase = 0;
@@ -246,6 +270,46 @@ window.Drone = (function () {
     return (r.maxRpm != null) ? r.maxRpm : 28000;
   };
 
+  /* Advance-ratio model for the rotor plant. js/parts.js derives the
+     per-prop shape (diameter, zero-thrust advance ratio, Cq slope) from
+     the selected prop and publishes it on the loadout's thrustInfo, so a
+     smaller or higher-pitch prop behaves differently at speed. The values
+     here are the 5.1×4.0×3 defaults and the fallback when no loadout has
+     been applied; the shared curve shape (reverse-inflow gain, VRS band)
+     is in CFG.physics.rotor.advance. */
+  Drone.prototype._rotorAdvance = function () {
+    const r = (CFG.physics && CFG.physics.rotor) || {};
+    const adv = r.advance || {};
+    const out = {
+      enabled:   adv.enabled !== false,
+      diameterM: (adv.diameterM  != null) ? adv.diameterM  : 0.12954,
+      jZero:     (adv.jZero      != null) ? adv.jZero      : 1.4,
+      cqSlope:   (adv.cqSlope    != null) ? adv.cqSlope    : 0.65,
+      ctRevGain: (adv.ctRevGain  != null) ? adv.ctRevGain  : 0.5,
+      ctRevMax:  (adv.ctRevMax   != null) ? adv.ctRevMax   : 1.15,
+      vrsCenter: (adv.vrsCenter  != null) ? adv.vrsCenter  : 0.25,
+      vrsWidth:  (adv.vrsWidth   != null) ? adv.vrsWidth   : 0.11,
+      vrsDepth:  (adv.vrsDepth   != null) ? adv.vrsDepth   : 0.30,
+      cqRevSlope:(adv.cqRevSlope != null) ? adv.cqRevSlope : 0.35,
+      cqMax:     (adv.cqMax      != null) ? adv.cqMax      : 1.8
+    };
+    const l = (typeof window !== 'undefined') ? window.__loadout : null;
+    const info = l && l.effective && l.effective.thrustInfo;
+    const aero = info && info.aero;
+    if (aero) {
+      if (aero.diameterM > 0)    out.diameterM = aero.diameterM;
+      if (aero.jZero > 0)        out.jZero     = aero.jZero;
+      if (aero.cqSlope != null)  out.cqSlope   = aero.cqSlope;
+    }
+    return out;
+  };
+
+  /* Relative Ct and Cq at an advance ratio. Exposed for tests/telemetry. */
+  Drone.prototype._propAxialFactors = function (J) {
+    const a = this._rotorAdvance();
+    return { ct: propCtFactor(J, a), cq: propCqFactor(J, a), jZero: a.jZero };
+  };
+
   /* Thrust the motors are being asked for (N). Shared by every plant, so
      easy-mode altitude hold and acro collective are identical in all
      three physics models. */
@@ -307,6 +371,14 @@ window.Drone = (function () {
     const spinDown = (rc.spinDown != null) ? rc.spinDown : 0.090;
     const Jrot     = (rc.rotorInertia != null) ? rc.rotorInertia : 2.2e-5;
     const rpmMax   = this._rotorMaxRpm();
+
+    /* Axial inflow is measured in the body frame, so angle of attack is
+       already in it: a tilted quad at speed sees air along its disc axes
+       the way its props do. */
+    const adv = this._rotorAdvance();
+    const advOn = adv.enabled && adv.diameterM > 0;
+    this._qInv.copy(this.quat).invert();
+    this._bodyVel.copy(this.velocity).applyQuaternion(this._qInv);
 
     /* Body axes: X = pitch, Y = yaw, Z = roll. CFG.physics.inertia is
        documented per airframe axis, so map it onto the sim's axes. */
@@ -513,11 +585,31 @@ window.Drone = (function () {
 
       const n = this._rotorState[i];
       this.rotorRpm[i] = n * rpmMax;
-      const T = (maxT / 4) * n * n * dmg[i];
+
+      /* Static thrust reference for this motor. The advance-ratio factors
+         scale it: Ct(J) decides how much of that thrust the disc actually
+         makes, Cq(J) the drag torque it reacts against the airframe. The
+         reaction torque uses the static reference, so it rises with inflow
+         even while thrust falls, exactly as a real prop does. Below a few
+         percent RPM the advance ratio is meaningless (J → ∞), so the disc
+         keeps its static coefficients there. */
+      const T0 = (maxT / 4) * n * n * dmg[i];
+      let ctF = 1, cqF = 1;
+      if (advOn && n > 0.01) {
+        const nRev = n * rpmMax / 60;
+        /* Air through the disc: body velocity plus the arm's own motion
+           from body rotation (ω × r). */
+        const vAx = this._bodyVel.y + this.angVel.z * MX[i] - this.angVel.x * MZ[i];
+        const J = vAx / (nRev * adv.diameterM);
+        ctF = propCtFactor(J, adv);
+        cqF = propCqFactor(J, adv);
+      }
+
+      const T = T0 * ctF;
       totalThrust += T;
       sumX += MX[i] * T;
       sumZ += MZ[i] * T;
-      sumSpinT += SPIN[i] * T;
+      sumSpinT += SPIN[i] * T0 * cqF;
       sumSpinOmega += SPIN[i] * (this.rotorRpm[i] * Math.PI * 2 / 60);
     }
 

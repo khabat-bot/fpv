@@ -251,14 +251,24 @@ what the sticks feel like; each one lands on its own with tests.
       low-throttle authority and the per-motor thrust loss supplies the damage
       authority, so scaling the target on top would count both twice. The
       legacy plants keep both.
-- [ ] Prop thrust and torque vs advance ratio (airspeed), not just RPM²
-      `T = (maxThrust/4)·n²` and `Q = torqueLength·T` hold at every airspeed,
-      so the quad has no top-speed wall and never loses thrust in a dive. Real
-      props lose ~20-30 % of static thrust at 20 m/s, prop drag torque rises
-      with inflow, and descending through your own wake gives VRS/propwash
-      (today only the legacy plants fake that with `CFG.propWashGain`). Needs
-      `Ct(J)` / `Cq(J)` per prop in `js/parts.js`, driven by the axial inflow
-      through each disc computed from body velocity and angle of attack.
+- [x] Prop thrust and torque vs advance ratio (airspeed), not just RPM²
+      The rotor plant scales each prop by `Ct(J)` / `Cq(J)`, where the advance
+      ratio is `J = V_axial / (n·D)`. The axial inflow is the body-frame
+      velocity projected on the thrust axis (so tilt and angle of attack are
+      already in it) plus each arm's own `ω × r`. `js/parts.js` derives the
+      per-prop coefficients from the selected prop — `jZero` (advance ratio
+      at zero thrust, higher for a steeper prop) and `cqSlope` — and the
+      loadout publishes them on `thrustInfo.aero`; `CFG.physics.rotor.advance`
+      holds the shared curve shape and the 5" fallback.
+      Thrust now falls roughly linearly with J (about −25 % at 20 m/s, zero at
+      `jZero`), which gives the quad a real top-speed wall and makes a dive
+      cost thrust instead of being free. Prop drag torque rises with inflow
+      (`Q` is taken from the static thrust reference times `Cq(J)`), so yaw
+      reaction and the load on the motors grow with airspeed. On descent the
+      prop windmills into clean air for a small gain, then enters the
+      vortex-ring band around `J ≈ -0.25` (the prop sits in its own wake) and
+      loses ~30 % until the descent is fast enough to leave the ring. That
+      replaces the legacy `CFG.propWashGain` wobble as the REAL plant's VRS.
 - [ ] Ground and wall effect in the rotor plant
       Skipped in REAL today (`!_rotorMode` guards the old random wobble).
       Real behaviour: extra thrust inside ~1 rotor diameter, the

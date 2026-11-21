@@ -76,6 +76,40 @@ window.CFG = {
       spinUp: 0.045,
       spinDown: 0.045,
 
+      /* ---- prop advance ratio (Ct(J), Cq(J)) ------------------------
+         Real props lose thrust as air flows through the disc: T falls ~25 %
+         at 20 m/s on a 5" prop, and the drag torque rises. The plant
+         evaluates J = V_axial / (n·D) per prop from body velocity (so tilt
+         and angle of attack are included) plus each arm's ω × r, then
+         scales thrust by Ct(J)/Ct(0) and reaction torque by Cq(J)/Cq(0).
+         J > 0 is climb/forward inflow; J < 0 is descent into the disc.
+         js/parts.js derives diameterM, jZero and cqSlope per prop from its
+         geometry and publishes them on the loadout; the values below are
+         the 5.1×4.0×3 defaults and the fallback with no loadout.
+           jZero:      J at which thrust reaches zero
+           cqSlope:    relative rise of Cq per unit J (J > 0)
+           cqRevSlope: relative rise of Cq per unit descent ratio (J < 0)
+           ctRevGain:  reverse-inflow thrust gain per unit descent ratio
+           ctRevMax:   cap on that gain (fast descent is not free thrust)
+           vrsCenter / vrsWidth / vrsDepth:
+                       the vortex-ring band (descent into the prop's own
+                       wake) — centre and width in descent ratio, depth as
+                       the fraction of thrust lost at its middle.
+           cqMax:      cap on the Cq rise. */
+      advance: {
+        enabled: true,
+        diameterM: 0.12954,
+        jZero: 1.4,
+        cqSlope: 0.65,
+        cqRevSlope: 0.35,
+        ctRevGain: 0.5,
+        ctRevMax: 1.15,
+        vrsCenter: 0.25,
+        vrsWidth: 0.11,
+        vrsDepth: 0.30,
+        cqMax: 1.8
+      },
+
       /* ---- rate PID (the loop a real flight controller runs) --------
          The output is an angular-acceleration demand; P is scaled so the
          sticks stay calibrated against `angResponse` (kp = 1.0 reproduces

@@ -105,6 +105,23 @@ test('every possible combo stays inside the safe mass and T/W envelope', () => {
   }
 });
 
+test('the prop loadout publishes its advance-ratio coefficients', () => {
+  const { Loadout } = setup();
+  const base = Loadout.buildEffective(DEFAULT).thrustInfo.aero;
+  const low  = Loadout.buildEffective({ ...DEFAULT, props: 'low_pitch_5130' }).thrustInfo.aero;
+  const high = Loadout.buildEffective({ ...DEFAULT, props: 'high_pitch_5152' }).thrustInfo.aero;
+
+  assert.ok(Math.abs(base.diameterM - 5.1 * 0.0254) < 1e-9, 'diameter ' + base.diameterM);
+  assert.ok(base.jZero > 1.0 && base.jZero < 2.0, 'default jZero ' + base.jZero);
+  assert.ok(high.jZero > base.jZero, 'a steeper prop must pull to a higher advance ratio');
+  assert.ok(low.jZero < base.jZero, 'a flatter prop must choke sooner');
+  for (const a of [base, low, high]) {
+    assert.ok(Number.isFinite(a.jZero) && a.jZero > 0, 'jZero ' + a.jZero);
+    assert.ok(Number.isFinite(a.cqSlope) && a.cqSlope > 0, 'cqSlope ' + a.cqSlope);
+    assert.ok(a.diameterM > 0, 'diameter ' + a.diameterM);
+  }
+});
+
 test('a prop that is too large for a motor is flagged as torque-limited', () => {
   const { Loadout } = setup();
   const e = Loadout.buildEffective({
