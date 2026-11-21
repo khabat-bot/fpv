@@ -149,26 +149,53 @@ Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
 
 - [x] Crash severity drives the feed: a light tumble keeps the picture, a hard
       hit kills the link. `Drone.crash(impactSpeed)` records a 0-1 severity and
-      `Drone.impact()` grades every collision path (see 3. Physics fidelity).
+      `Drone.impact()` grades every collision path (see 4. Physics fidelity).
 
 ### 4. Physics fidelity
 
-`js/physics.js` is rate-based (Betaflight-style): great feel, short step from complete.
+`js/physics.js` now runs a rotor plant by default; the old rate loop is still
+selectable. SETTINGS → FLIGHT → Physics picks the plant (`CFG.physics.model`):
+REAL (`'ROTOR'`, default), 6-DOF or RATE (`'SIMPLE'`). Old `sixDof` settings
+are migrated by `applyPhysicsModel()` in `js/main.js`.
 
+- [x] Full rotor plant: four motor speeds instead of one thrust command
+      (REAL). Each frame the rate PID produces a body torque demand, a
+      geometric mixer splits it across the four motors (X-frame, motor order
+      FR, FL, RR, RL), and each motor's RPM state is driven toward its command
+      through `CFG.physics.rotor.spinUp` / `spinDown` (45 ms both — modern
+      DShot ESCs brake the prop actively, so spin-down is not the old 90 ms
+      free-wheel coast). Thrust is ∝ RPM² (`_collectiveThrust`), so current
+      draw, thrust and control authority all move together instead of being
+      independent fudges. Yaw comes from prop reaction torque (τy = −qLen·Σ
+      spin·T), not from a torque cap. The result acts on the body inertia
+      tensor with the ω × Iω gyroscopic term and per-rotor gyroscopic torque,
+      and a filtered D-term on the gyro rate (`rotor.rateDamping`) damps the
+      motor-lag overshoot the way a real rate PID does. The RPM ceiling is
+      the loadout's prop model (`thrustInfo.rpm` from `js/parts.js`);
+      `rotor.maxRpm` is only a fallback.
 - [x] Motor/ESC response lag and rotor inertia (rate ramps, not instant)
-      Thrust is a first-order lag on the command (`CFG.esc.spinUp` 32 ms,
-      `spinDown` 70 ms — props coast down slower than they spin up), and the
-      rate target lags the stick by `CFG.esc.rateLag` (15 ms). Steady state is
-      unchanged, so hover trim and the loadout T/W table still hold; only
-      transients ramp.
+      Still applies to the legacy plants: thrust is a first-order lag on the
+      command (`CFG.esc.spinUp` 32 ms, `spinDown` 70 ms), and the rate target
+      lags the stick by `CFG.esc.rateLag` (15 ms). Hover trim and the loadout
+      T/W table hold in every model; only transients differ.
 - [x] Full 6-DOF option: torque + inertia tensor instead of rate targets, gyro drift
-      SETTINGS → FLIGHT → Physics: RATE (default, the Betaflight feel that was
-      already there) or 6-DOF. In 6-DOF the rate error becomes a motor torque
+      6-DOF is the middle ground: the rate error becomes a motor torque
       (N·m, capped by `CFG.physics.maxTorque`), the torque acts on the body
       inertia tensor (yaw inertia is the largest, so yaw is the slowest axis),
       and a wandering gyro bias (`CFG.physics.gyroDrift`) makes the realised
       rate drift off the commanded one. Gains are calibrated to `torqueRef`, so
-      the sticks feel the same in both modes.
+      the sticks feel the same as the other modes.
+- [x] Asymmetric damage in the rotor plant
+      Damage takes thrust away per motor rather than as a global fudge, so a
+      hit pulls the airframe toward the dead corner through the same mixer that
+      flies it, and `rotorRpm` telemetry shows the uneven props. The artificial
+      wobble / desync / ground-effect disturbances are skipped in REAL because
+      the rotor dynamics produce those transients themselves.
+- [x] Body-frame drag and thrust-derived current
+      Drag is evaluated per body axis (`CFG.aero.bodyDrag`), so a quad can be
+      draggier edge-on or in the prop disc than lengthwise; battery current
+      follows the rotor thrust instead of throttle, so punch-outs sag the LiPo
+      the way a real pack does.
 - [x] Air density / temperature effects on thrust
       `Drone._airDensityRatio()` runs the ISA troposphere model from the drone's
       altitude, normalised to the 1.225 kg/m³ sea-level air the model is tuned
@@ -189,6 +216,74 @@ Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
       corner) and adds an attitude tremor plus thrust modulation (`wobble`).
       The OSD shows `ARMED · DMG`, then `ARMED · DMG 2`, `ARMED · DMG 3`; a
       respawn clears it.
+
+#### Realism backlog (rotor plant, in order)
+
+The rotor plant is a real rigid body now, but several layers a physical quad
+has are still missing or scripted. These are ordered by how much they change
+what the sticks feel like; each one lands on its own with tests.
+
+- [ ] Real rate PID: P/I/D + feedforward instead of the first-order rate lag
+      `_stepRotors()` currently turns the rate error into an angular
+      acceleration (`error / CFG.angResponse`) and adds one filtered D-term
+      (`rotor.rateDamping`). There is no integral term, so a CG offset, a bent
+      prop, a damaged motor or a steady wind leaves a permanent attitude
+      offset instead of being trimmed away, and no feedforward, so stick
+      transients lag. Replace it with per-axis P/I/D + FF on the gyro rate (D
+      low-pass, I windup limit, `iterm_relax`, anti-gravity, airmode), with
+      the mixer moved behind it. Without airmode the mixer clamps at zero
+      collective and rotational authority disappears at low throttle, which is
+      why the current model has no airmode at all.
+- [ ] Prop thrust and torque vs advance ratio (airspeed), not just RPM²
+      `T = (maxThrust/4)·n²` and `Q = torqueLength·T` hold at every airspeed,
+      so the quad has no top-speed wall and never loses thrust in a dive. Real
+      props lose ~20-30 % of static thrust at 20 m/s, prop drag torque rises
+      with inflow, and descending through your own wake gives VRS/propwash
+      (today only the legacy plants fake that with `CFG.propWashGain`). Needs
+      `Ct(J)` / `Cq(J)` per prop in `js/parts.js`, driven by the axial inflow
+      through each disc computed from body velocity and angle of attack.
+- [ ] Ground and wall effect in the rotor plant
+      Skipped in REAL today (`!_rotorMode` guards the old random wobble).
+      Real behaviour: extra thrust inside ~1 rotor diameter, the
+      cushion-then-suck-down transition on landing, recirculation on takeoff
+      and a lateral push near walls/ceilings. Implement as a thrust
+      multiplier from AGL and disc loading rather than an acceleration fudge.
+- [ ] Angle-of-attack aerodynamics (lift, pitch-up, prop-disc moment)
+      Drag is three fixed multipliers (`CFG.aero.bodyDrag`) on body velocity:
+      no AoA dependence, no lift from the frame, no prop-disc moment. A real
+      quad pitches up as speed rises and needs forward stick to hold level
+      flight.
+- [ ] Motor/ESC limits: torque and current limit, heat, desync, idle throttle
+      RPM follows `sqrt(cmd)·maxRpm` through a first-order lag with no torque
+      or current ceiling, no motor heating, no desync at high RPM and no idle
+      throttle. An over-propped loadout gets slower instead of bogging or
+      desyncing.
+- [ ] Gyro noise, quantisation and filter group delay
+      The gyro is `angVel + slow sine bias`. No white noise, no quantisation,
+      no 1 kHz+ sampling, no filter delay, and the controller runs at the
+      physics rate (120-240 Hz) rather than 8k/8k. Gyro noise and filter delay
+      are what make high D feel nervous and a bad tune oscillate.
+- [ ] Turbulence model and wind moments
+      `CFG.wind` presets are a few sinusoids applied at the CG. Real
+      turbulence is Dryden/von Kármán filtered noise with a scale length, a
+      wind gradient with altitude, and a moment arm so gusts roll and pitch
+      the airframe instead of only pushing it.
+- [ ] Real mass properties: CG offset, off-diagonal inertia
+      The inertia tensor is diagonal with the CG at the geometric centre, and
+      `_collideBVHOnce()` uses a scalar `I = 0.003` for every impact. Battery
+      placement on a real quad moves the CG (that is how you trim one), and an
+      off-centre hit rotates about the true tensor.
+- [ ] Geometric crash damage instead of scripted stages
+      `CFG.crashSeverity.stages` are thrust/wobble scales. Real damage is per
+      part: a prop-tip strike bends or breaks that prop (thrust + balance), a
+      motor-bell strike kills that motor, a cracked arm flexes. Feeds the
+      rotor plant's per-motor thrust and needs turtle mode to recover.
+- [ ] Finer integration and RC/link realism
+      Semi-implicit Euler at the physics rate is fine for feel but not for
+      fast tumbles (an inner 500-1000 Hz loop, or RK4, removes that error).
+      Input has deadband/travel but no frame jitter, packet loss or a true
+      Betaflight "actual rates" mapping, so a real quad's rates/PID numbers do
+      not drop in.
 
 ### 5. Content library
 
