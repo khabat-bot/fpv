@@ -1329,7 +1329,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
     flightMode: 'ACRO',
     env: 'DAY',
     batteryMode: 'REAL',
-    physics: 'RATE',
+    physics: 'REAL',
     telemGraph: false,
     /* External transmitter / gamepad (SETTINGS → INPUT). Merged into
        CFG.controller by applyController(); the transport-level numbers
@@ -1441,7 +1441,7 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
           settings.batteryMode = s.batteryMode;
         }
         if (typeof s.physics === 'string'
-            && ['RATE','6DOF'].indexOf(s.physics) !== -1) {
+            && ['RATE','6DOF','REAL'].indexOf(s.physics) !== -1) {
           settings.physics = s.physics;
         }
         if (s.loadout && typeof s.loadout === 'object') {
@@ -1559,11 +1559,16 @@ if (window.HUD && HUD.resizeStickHUD) window.addEventListener('resize', HUD.resi
       : CHASE_DIST.MID;
   }
 
-  /* RATE = the Betaflight-style rate loop; 6DOF = torque + inertia tensor
-     with gyro drift (see js/physics.js and CFG.physics). */
+  /* REAL = full rotor plant (four motors, prop thrust/torque, geometric
+     mixer, rigid-body inertia); 6DOF = torque + inertia tensor with gyro
+     drift; RATE = the original Betaflight-style rate loop. See
+     js/physics.js and CFG.physics. */
   function applyPhysicsModel() {
     if (!CFG.physics) CFG.physics = {};
     CFG.physics.sixDof = (settings.physics === '6DOF');
+    CFG.physics.model = settings.physics === 'REAL'
+      ? 'ROTOR'
+      : (settings.physics === '6DOF' ? '6DOF' : 'SIMPLE');
   }
 
   function applyBatteryMode() {

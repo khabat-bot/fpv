@@ -31,25 +31,62 @@ window.CFG = {
   },
 
   /* ------------------------- physics model ----------------------------
-     sixDof: false → rate loop (Betaflight-style rate targets, default)
-     sixDof: true  → the rate error becomes a motor TORQUE, the torque is
-                     applied to the body inertia tensor, and a gyro bias
-                     makes the realised rate drift. Same sticks, real
-                     rotor dynamics underneath. Toggled in SETTINGS →
-                     FLIGHT → Physics.
+     model selects the plant (SETTINGS → FLIGHT → Physics):
+       'ROTOR'  full rotor plant (default): four independent motor
+                speeds drive per-prop thrust (∝ RPM²) and reaction
+                torque; the rate error becomes a body torque demand that
+                a mixer splits into motor commands; the rotor speeds spin
+                up/down through the ESC and the resulting forces act on
+                the rigid body's inertia tensor (with the gyroscopic
+                ω × Iω term and rotor gyroscopic torque).
+       '6DOF'   legacy middle ground: rate error → torque → inertia
+                tensor, with an idealised torque source.
+       'SIMPLE' the original Betaflight-style rate loop.
+     sixDof is kept in sync by js/main.js for older settings stores.
        inertia:    kg·m² about each body axis. Yaw inertia is the largest
                    (the mass is spread out in the prop plane), which is
                    why a real quad yaws slower than it rolls.
        torqueRef:  inertia the rate gains are calibrated against, so RATE
                    and 6-DOF feel the same at the sticks
        maxTorque:  N·m per axis — motor torque limit
-       gyroDrift:  rad/s the rate estimate can wander (gyro bias)      */
+       gyroDrift:  rad/s the rate estimate can wander (gyro bias)
+       rotor:      the rotor plant (model 'ROTOR'). arm is the motor
+                   offset along body X and Z (X-frame); torqueLength is
+                   Q/T = (Cq/Ct)·D per prop; rotorInertia is one prop's
+                   spin inertia (gyroscopic torque); spinUp/spinDown are
+                   the motor+prop speed time constants. maxRpm is only
+                   the fallback used when no Loadout has published the
+                   prop model's RPM (js/parts.js).                        */
   physics: {
+    model: 'ROTOR',
     sixDof: false,
     inertia: { roll: 0.0042, pitch: 0.0056, yaw: 0.0085 },
     torqueRef: 0.0042,
     maxTorque: 0.9,
-    gyroDrift: 0.02
+    gyroDrift: 0.02,
+    rotor: {
+      arm: 0.078,
+      maxRpm: 28000,
+      torqueLength: 0.0125,
+      rotorInertia: 2.2e-5,
+      /* Motor + prop speed time constants. Modern ESCs brake the prop
+         actively (DShot bidirectional), so spin-down is not much slower
+         than spin-up; the old 90 ms coast only applies to a free-wheeling
+         prop with the motor de-energised. */
+      spinUp: 0.045,
+      spinDown: 0.045,
+      /* D-term on the gyro rate, seconds. The motor lag would otherwise
+         overshoot the commanded rate; a real rate PID damps it the same
+         way. 0 disables. */
+      rateDamping: 0.030
+    }
+  },
+
+  /* Body-axis drag multipliers. Drag is evaluated in the body frame, so a
+     quad can be draggier edge-on (x) or in the prop disc (y) than
+     lengthwise (z). 1.0 = the isotropic dragLinear/dragQuadratic above. */
+  aero: {
+    bodyDrag: { x: 1.0, y: 1.0, z: 1.0 }
   },
 
   /* Motor authority coupling: rate targets are scaled by throttle.

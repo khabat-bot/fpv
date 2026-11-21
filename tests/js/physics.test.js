@@ -237,6 +237,48 @@ test('touching the ground while armed sets a grounded state', () => {
   assert.ok(d.position.y >= d.getFloorY(0, 0) - 1e-6);
 });
 
+/* ---- ROTOR plant (CFG.physics.model 'ROTOR', the default) ---------- */
+
+test('rotor plant: four props hold hover thrust at hover collective', () => {
+  const { CFG, Drone } = setup();
+  const d = airborne(Drone, 30);
+  fly(d, 1, 1 / 240, hoverStick());
+  const weight = CFG.mass * CFG.gravity;
+  assert.ok(Math.abs(d._thrustState - weight) < weight * 0.05,
+    'hover thrust ' + d._thrustState.toFixed(2) + ' N vs weight ' + weight.toFixed(2) + ' N');
+  assert.ok(d.rotorRpm.every(function (rpm) { return rpm > 0; }), 'all four motors should run');
+});
+
+test('rotor plant: spinning up is limited by the props, and disarming stops them', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone);
+  fly(d, 0.2, 1 / 240, input({ throttle: 1 }));
+  const spun = d.rotorRpm.slice();
+  assert.ok(spun.every(function (rpm) { return rpm > 1000; }), 'motors should reach flight RPM');
+
+  d.toggleArm();
+  fly(d, 1, 1 / 240, input({ throttle: 1 }));
+  assert.ok(d.rotorRpm.every(function (rpm) { return rpm < 1; }), 'disarmed props must spool down');
+});
+
+test('rotor plant: motor commands stay inside their physical range', () => {
+  const { CFG, Drone } = setup();
+  const d = airborne(Drone, 30);
+  fly(d, 0.4, 1 / 240, input({ throttle: 1, roll: 1, pitch: 1, yaw: 1 }));
+  assert.ok(d._rotorState.every(function (s) { return s >= 0 && s <= 1 + 1e-9; }),
+    'motor commands out of range: ' + d._rotorState.join(','));
+  assert.ok(d._thrustState <= CFG.maxThrust * 1.01,
+    'thrust above the thrust the props can make: ' + d._thrustState);
+});
+
+test('rotor plant: the rate loop settles on the commanded rate', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone, 30);
+  fly(d, 0.6, 1 / 240, input({ throttle: 0.75, roll: 1 }));
+  assert.ok(Math.abs(d.angVel.z - d._rateTarget.z) < 0.6,
+    'realised rate ' + d.angVel.z.toFixed(2) + ' vs target ' + d._rateTarget.z.toFixed(2));
+});
+
 test('reset() restores spawn state after a crash', () => {
   const { CFG, Drone } = setup();
   const d = airborne(Drone);

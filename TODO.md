@@ -149,26 +149,53 @@ Link Sim, Lens). Tunables live in `CFG.fpvFeed`.
 
 - [x] Crash severity drives the feed: a light tumble keeps the picture, a hard
       hit kills the link. `Drone.crash(impactSpeed)` records a 0-1 severity and
-      `Drone.impact()` grades every collision path (see 3. Physics fidelity).
+      `Drone.impact()` grades every collision path (see 4. Physics fidelity).
 
 ### 4. Physics fidelity
 
-`js/physics.js` is rate-based (Betaflight-style): great feel, short step from complete.
+`js/physics.js` now runs a rotor plant by default; the old rate loop is still
+selectable. SETTINGS → FLIGHT → Physics picks the plant (`CFG.physics.model`):
+REAL (`'ROTOR'`, default), 6-DOF or RATE (`'SIMPLE'`). Old `sixDof` settings
+are migrated by `applyPhysicsModel()` in `js/main.js`.
 
+- [x] Full rotor plant: four motor speeds instead of one thrust command
+      (REAL). Each frame the rate PID produces a body torque demand, a
+      geometric mixer splits it across the four motors (X-frame, motor order
+      FR, FL, RR, RL), and each motor's RPM state is driven toward its command
+      through `CFG.physics.rotor.spinUp` / `spinDown` (45 ms both — modern
+      DShot ESCs brake the prop actively, so spin-down is not the old 90 ms
+      free-wheel coast). Thrust is ∝ RPM² (`_collectiveThrust`), so current
+      draw, thrust and control authority all move together instead of being
+      independent fudges. Yaw comes from prop reaction torque (τy = −qLen·Σ
+      spin·T), not from a torque cap. The result acts on the body inertia
+      tensor with the ω × Iω gyroscopic term and per-rotor gyroscopic torque,
+      and a filtered D-term on the gyro rate (`rotor.rateDamping`) damps the
+      motor-lag overshoot the way a real rate PID does. The RPM ceiling is
+      the loadout's prop model (`thrustInfo.rpm` from `js/parts.js`);
+      `rotor.maxRpm` is only a fallback.
 - [x] Motor/ESC response lag and rotor inertia (rate ramps, not instant)
-      Thrust is a first-order lag on the command (`CFG.esc.spinUp` 32 ms,
-      `spinDown` 70 ms — props coast down slower than they spin up), and the
-      rate target lags the stick by `CFG.esc.rateLag` (15 ms). Steady state is
-      unchanged, so hover trim and the loadout T/W table still hold; only
-      transients ramp.
+      Still applies to the legacy plants: thrust is a first-order lag on the
+      command (`CFG.esc.spinUp` 32 ms, `spinDown` 70 ms), and the rate target
+      lags the stick by `CFG.esc.rateLag` (15 ms). Hover trim and the loadout
+      T/W table hold in every model; only transients differ.
 - [x] Full 6-DOF option: torque + inertia tensor instead of rate targets, gyro drift
-      SETTINGS → FLIGHT → Physics: RATE (default, the Betaflight feel that was
-      already there) or 6-DOF. In 6-DOF the rate error becomes a motor torque
+      6-DOF is the middle ground: the rate error becomes a motor torque
       (N·m, capped by `CFG.physics.maxTorque`), the torque acts on the body
       inertia tensor (yaw inertia is the largest, so yaw is the slowest axis),
       and a wandering gyro bias (`CFG.physics.gyroDrift`) makes the realised
       rate drift off the commanded one. Gains are calibrated to `torqueRef`, so
-      the sticks feel the same in both modes.
+      the sticks feel the same as the other modes.
+- [x] Asymmetric damage in the rotor plant
+      Damage takes thrust away per motor rather than as a global fudge, so a
+      hit pulls the airframe toward the dead corner through the same mixer that
+      flies it, and `rotorRpm` telemetry shows the uneven props. The artificial
+      wobble / desync / ground-effect disturbances are skipped in REAL because
+      the rotor dynamics produce those transients themselves.
+- [x] Body-frame drag and thrust-derived current
+      Drag is evaluated per body axis (`CFG.aero.bodyDrag`), so a quad can be
+      draggier edge-on or in the prop disc than lengthwise; battery current
+      follows the rotor thrust instead of throttle, so punch-outs sag the LiPo
+      the way a real pack does.
 - [x] Air density / temperature effects on thrust
       `Drone._airDensityRatio()` runs the ISA troposphere model from the drone's
       altitude, normalised to the 1.225 kg/m³ sea-level air the model is tuned
