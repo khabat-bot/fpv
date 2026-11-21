@@ -52,7 +52,8 @@ fly(drone, 1, 1 / 240, input({ throttle: 0.5 }));
 | `js/loadout.test.js` | part catalogs, baseline composition, every part combo stays flyable, `CFG` restore |
 | `js/net.test.js` | connect/join/errors, 30 Hz state throttle, ping/pong, reconnect, leave |
 | `js/replay-store.test.js` | IndexedDB metadata/data separation, sorting, rename, delete |
-| `python/test_server.py` | helper/frame units, HTTP endpoints, map upload, WS relay, room limits, host migration, protocol parity with `server.rs` |
+| `python/test_server.py` | helper/frame units, HTTP endpoints, map upload, WS relay, room limits, host migration, source-level parity with `server.rs` |
+| `python/test_server_parity.py` | runs the same scenarios against a real `server.py` and a compiled `server.rs` and diffs the observations: HTTP, room lifecycle, limits, state relay, rate limiting, map upload/cleanup, oversized frames |
 
 ## Adding a module test
 
@@ -65,3 +66,9 @@ fly(drone, 1, 1 / 240, input({ throttle: 0.5 }));
 
 The server tests start a real server on an ephemeral port and use a temporary
 `FPV_MAP_DIR`; they never touch `/tmp` or the network outside localhost.
+
+`test_server_parity.py` additionally needs `rustc`: it compiles `server.rs`
+once per run (cached in the temp dir) and starts the binary next to
+`server.py`. Point `FPV_RUST_SERVER` at an existing binary to skip the build.
+With no toolchain the module skips locally; under `CI` it fails, so a green
+build cannot silently stop exercising the Rust port.

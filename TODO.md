@@ -1,5 +1,14 @@
 # TODO
 
+## How to read this file
+
+An unchecked box is *not* automatically a bug: sections 5 and 6 are planned
+features and hardening, not defects. "Fix the bugs in the TODO" means lines
+that describe something demonstrably broken; anything else is new work. A
+fixed defect is ticked with a note naming the code path and the test that
+covers it, so that a stale claim is visible instead of silently misdirecting
+the next change.
+
 ## Done
 
 - FIXED: two errors sometimes happen when first opening the page:
@@ -228,19 +237,38 @@ log is one flight and disarmed bench time never pushes the flight out.
 
 ### 8. Engineering
 
-- [ ] Unit tests + CI: physics, net protocol, loadout math
-      (no tests exist at all)
-- [ ] Server protocol parity tests between `server.py` and `server.rs`
+- [x] Unit tests + CI: physics, net protocol, loadout math
+      `tests/` is a dependency-free suite (`node --test` + `python3 -m
+      unittest`, no installs): physics, CRSF/gamepad input, racing, loadout,
+      net client, replay storage, plus the server's HTTP endpoints and WS
+      relay. `./tests/run.sh` runs both halves; `.github/workflows/tests.yml`
+      runs it on every push and pull request, and compiles `server.rs`.
+- [x] Server protocol parity tests between `server.py` and `server.rs`
+      Two layers. `test_server.py::ParityTest` pins the mirrored constants,
+      endpoints and message names as source text. `test_server_parity.py`
+      runs the same scenarios against both real servers on private ports —
+      static/HTTP endpoints, room lifecycle and host migration, room limits,
+      state relay and sanitising, state rate limiting, map upload/fetch/
+      cleanup and the oversized-frame drop — and compares only normalised
+      client-visible observations, so a clamp, an error string or a missing
+      broadcast that drifts between the ports fails the suite. It compiles
+      `server.rs` with `rustc`; without a toolchain it skips locally and
+      fails under CI.
 - [ ] Protocol spec doc derived from the server.py docstring, kept in sync
       with both servers
 
-- [ ] Net state relay: reject non-finite `p`/`q`/`v` when framing.
+- [x] Net state relay: reject non-finite `p`/`q`/`v` when framing.
       `clean_vec` (server.py) already checks `math.isfinite` on input and
-      returns None, so this is not a live bug. It is defence in depth
-      against a future writer that skips clean_vec: json.dumps would
-      emit `NaN`/`Infinity` (invalid JSON) and every peer's
-      `JSON.parse` would then throw. Add a test beside it.
-- [ ] External controller: the INPUT-tab status poller never stops.
-      `setInterval(..., 250)` in the controller panel (`js/main.js`,
-      ~line 1988) has no `clearInterval`; clear it when the panel
-      is torn down.
+      returns None, so this was not a live bug. Defence in depth against a
+      future writer that skips clean_vec is now in both servers: `frame_json`
+      (server.py) serializes with `allow_nan=False` and returns None for a
+      message that would emit `NaN`/`Infinity`, so the state path drops it and
+      `broadcast_json` skips it; `json_is_finite` (server.rs) guards the state
+      frame the same way, and the Rust JSON writer emits `null` instead of a
+      non-finite literal. Covered by `test_frame_json_refuses_non_finite_numbers`
+      and `test_state_with_non_finite_vector_is_dropped`.
+- [x] External controller: the INPUT-tab status poller never stops.
+      `startCtlStatusPoller()` (`js/main.js`) now starts the 250 ms interval
+      when the settings panel opens, and `stopCtlStatusPoller()` clears it on
+      the close button and the backdrop click; the tick also stops itself if
+      the panel is hidden, so no interval survives the panel.

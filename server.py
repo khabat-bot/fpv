@@ -108,9 +108,25 @@ def delete_map(room):
         pass
 
 
+def frame_json(obj):
+    """Serialize one message for the wire, or None if it holds a non-finite number.
+
+    json.dumps would happily emit NaN/Infinity, which is not valid JSON, and
+    every peer's JSON.parse would throw. clean_vec already rejects those on the
+    state path; this is the framing backstop for any future writer that skips
+    it.
+    """
+    try:
+        return json.dumps(obj, separators=(',', ':'), allow_nan=False).encode('utf-8')
+    except (TypeError, ValueError):
+        return None
+
+
 async def broadcast_json(room, obj, skip_pid=None):
     """Send one JSON message to every player in a room."""
-    payload = json.dumps(obj, separators=(',', ':')).encode('utf-8')
+    payload = frame_json(obj)
+    if payload is None:
+        return
     for pid, p in list(room['players'].items()):
         if pid == skip_pid:
             continue
@@ -536,7 +552,9 @@ async def ws_session(reader, writer):
                     out['n'] = n
 
                 # Serialize once, then fan the same bytes out to each peer.
-                frame = json.dumps(out, separators=(',', ':')).encode('utf-8')
+                frame = frame_json(out)
+                if frame is None:
+                    continue
                 for op, p in list(rooms[room_id]['players'].items()):
                     if op == pid:
                         continue
