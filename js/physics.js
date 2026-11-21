@@ -67,6 +67,13 @@ window.Drone = (function () {
     this.rotorRpm = [0, 0, 0, 0];
     this._ratePrev = new THREE.Vector3();   /* filtered gyro derivative */
     this._rateDeriv = new THREE.Vector3();
+    this._tgtDeriv = new THREE.Vector3();   /* filtered setpoint derivative */
+    this._pidTgtPrev = new THREE.Vector3(); /* setpoint of the last step */
+    this._pidI = new THREE.Vector3();       /* integrated rate error (rad) */
+    this._pidFf = new THREE.Vector3();      /* feedforward demand (rad/s²) */
+    this._collPrev = 0;                     /* last collective - anti-gravity */
+    this._agBoost = 0;                      /* anti-gravity collective kick */
+    this._mixerSat = 0;                     /* mixer clipped last step      */
     this._rateTarget  = new THREE.Vector3();   /* lagged rate command   */
     this._gyroBias    = new THREE.Vector3();   /* rad/s — 6-DOF drift   */
     this._gyroMeas    = new THREE.Vector3();   /* angVel + gyro bias    */
@@ -148,6 +155,13 @@ window.Drone = (function () {
     this.rotorRpm[2] = this.rotorRpm[3] = 0;
     this._ratePrev.set(0, 0, 0);
     this._rateDeriv.set(0, 0, 0);
+    this._tgtDeriv.set(0, 0, 0);
+    this._pidTgtPrev.set(0, 0, 0);
+    this._pidI.set(0, 0, 0);
+    this._pidFf.set(0, 0, 0);
+    this._collPrev = 0;
+    this._agBoost = 0;
+    this._mixerSat = 0;
     this._rateTarget.set(0, 0, 0);
     this._gyroBias.set(0, 0, 0);
     this._gyroMeas.set(0, 0, 0);
@@ -286,6 +300,7 @@ window.Drone = (function () {
   Drone.prototype._stepRotors = function (dt, collectiveThrust, maxThrustNow) {
     const pc = CFG.physics || {};
     const rc = pc.rotor || {};
+    const pid = rc.pid || {};
     const arm      = (rc.arm      != null) ? rc.arm      : 0.078;
     const qLen     = (rc.torqueLength != null) ? rc.torqueLength : 0.0125;
     const spinUp   = (rc.spinUp   != null) ? rc.spinUp   : 0.045;
@@ -307,6 +322,26 @@ window.Drone = (function () {
       ? Math.max(0, Math.min(1, collectiveThrust / maxT))
       : 0;
 
+    /* Anti-gravity: a throttle jab adds a short collective kick so the
+       quad starts climbing before the I-term has wound up. Without it a
+       PID that is stable in a hover sags through every punch-out, which
+       is exactly why Betaflight has the feature. The kick decays in a
+       few tens of ms and never lifts an idle, un-asked-for throttle. */
+    const agGain  = (pid.antiGravity != null) ? Math.max(0, pid.antiGravity) : 0.35;
+    const agDecay = Math.max(1e-3, (pid.antiGravityDecay != null) ? pid.antiGravityDecay : 0.06);
+    if (agGain > 0 && dt > 1e-9) {
+      const dCol = collective - this._collPrev;
+      if (dCol > 0) {
+        this._agBoost = Math.min(0.25, (this._agBoost || 0) + dCol * agGain);
+      }
+    }
+    this._collPrev = collective;
+    if (!this.armed) this._agBoost = 0;
+    if (this._agBoost) {
+      this._agBoost *= Math.exp(-dt / agDecay);
+      if (this._agBoost < 1e-4) this._agBoost = 0;
+    }
+
     /* Gyro bias: the FC reads a slowly wandering offset, exactly as in
        the 6-DOF plant. */
     const gd = (pc.gyroDrift != null) ? pc.gyroDrift : 0;
@@ -322,26 +357,88 @@ window.Drone = (function () {
     }
     const meas = this._gyroMeas.copy(this.angVel).add(this._gyroBias);
 
-    /* Desired angular acceleration from the rate loop, then the torque
-       that has to act on the body to produce it. */
-    let ax = (this._rateTarget.x - meas.x) / CFG.angResponse;
-    let ay = (this._rateTarget.y - meas.y) / CFG.angResponse;
-    let az = (this._rateTarget.z - meas.z) / CFG.angResponse;
-    /* D-term on the gyro rate: the motor lag would overshoot the commanded
-       rate without it, and a real rate PID damps exactly this. The
-       derivative is low-pass filtered (10 ms) so the ESC lag does not
-       turn it into noise. */
-    const kd = (rc.rateDamping != null) ? rc.rateDamping : 0.03;
-    if (kd > 1e-6 && dt > 1e-9) {
-      const f = 1 - Math.exp(-dt / 0.010);
-      this._rateDeriv.x += ((meas.x - this._ratePrev.x) / dt - this._rateDeriv.x) * f;
-      this._rateDeriv.y += ((meas.y - this._ratePrev.y) / dt - this._rateDeriv.y) * f;
-      this._rateDeriv.z += ((meas.z - this._ratePrev.z) / dt - this._rateDeriv.z) * f;
-      ax -= kd * this._rateDeriv.x;
-      ay -= kd * this._rateDeriv.y;
-      az -= kd * this._rateDeriv.z;
+    /* ===== rate PID ==================================================
+       A real FC does not turn a rate error into a torque. It runs a
+       per-axis PID on the gyro rate:
+         P   proportional to the error, the workhorse
+         I   trims out anything steady — a CG offset, a bent or damaged
+             prop, a steady wind. Without it a quad flies with a permanent
+             attitude/rate offset no matter how well P is tuned.
+         D   damps the approach to the target. It differentiates the
+             MEASURED rate, not the error, so a stick step does not kick
+             it, and the result is low-pass filtered because differentiating
+             a gyro is differentiating noise.
+         FF  feeds the setpoint's own rate of change forward, so a stick
+             step starts the motors before the error has built up.
+       The output stays an angular-acceleration demand, so the sticks are
+       still calibrated against CFG.angResponse and the inertia tensor
+       below turns the demand into a torque. */
+    const kpGain = ((pid.kp != null) ? pid.kp : 1) / CFG.angResponse;
+    const kiGain = (pid.ki != null) ? Math.max(0, pid.ki) : 25;
+    const kdGain = (pid.kd != null) ? Math.max(0, pid.kd) : 0.030;
+    const ffGain = (pid.ff != null) ? Math.max(0, pid.ff) : 0.012;
+    const dLpf   = Math.max(1e-4, (pid.dLpf != null) ? pid.dLpf : 0.010);
+    const ffLpf  = Math.max(1e-4, (pid.ffLpf != null) ? pid.ffLpf : 0.020);
+    const itLimit = (pid.itermLimit != null) ? Math.max(0, pid.itermLimit) : 0.55;
+    const itRelax = (pid.itermRelax != null) ? Math.max(0, Math.min(1, pid.itermRelax)) : 0.75;
+    const itCut   = Math.max(1e-3, (pid.itermRelaxCutoff != null) ? pid.itermRelaxCutoff : 90);
+    const itSatRelax = (pid.itermSatRelax != null) ? Math.max(0, Math.min(1, pid.itermSatRelax)) : 1;
+
+    const ex = this._rateTarget.x - meas.x;
+    const ey = this._rateTarget.y - meas.y;
+    const ez = this._rateTarget.z - meas.z;
+
+    /* Both derivatives are first-order low-passed: the setpoint one for
+       feedforward, the gyro one for the D-term. */
+    const dTgt  = this._tgtDeriv;
+    const dGyro = this._rateDeriv;
+    if (dt > 1e-9) {
+      const fD  = 1 - Math.exp(-dt / dLpf);
+      const fFf = 1 - Math.exp(-dt / ffLpf);
+      dTgt.x  += ((this._target.x - this._pidTgtPrev.x) / dt - dTgt.x)  * fFf;
+      dTgt.y  += ((this._target.y - this._pidTgtPrev.y) / dt - dTgt.y)  * fFf;
+      dTgt.z  += ((this._target.z - this._pidTgtPrev.z) / dt - dTgt.z)  * fFf;
+      dGyro.x += ((meas.x - this._ratePrev.x) / dt - dGyro.x) * fD;
+      dGyro.y += ((meas.y - this._ratePrev.y) / dt - dGyro.y) * fD;
+      dGyro.z += ((meas.z - this._ratePrev.z) / dt - dGyro.z) * fD;
     }
+    this._pidTgtPrev.copy(this._target);
     this._ratePrev.copy(meas);
+
+    /* I-term with iterm relax: while the setpoint is slewing fast the
+       integral is suppressed, so a stick step does not leave a wound-up
+       I-term to unwind after the quad has already got there (that unwind
+       is the overshoot real FCs tune out with iterm_relax). The integral
+       is clamped in torque-authority terms, not in error-seconds, so at
+       saturation it can never grow past `itermLimit` of the available
+       angular acceleration. */
+    const it = this._pidI;
+    const satScale = 1 - itSatRelax * this._mixerSat;
+    if (this.armed && dt > 1e-9 && satScale > 0) {
+      const rx = Math.abs(dTgt.x), ry = Math.abs(dTgt.y), rz = Math.abs(dTgt.z);
+      const sx = satScale * ((rx <= itCut) ? 1 : Math.max(0, 1 - itRelax * Math.min(1, (rx - itCut) / itCut)));
+      const sy = satScale * ((ry <= itCut) ? 1 : Math.max(0, 1 - itRelax * Math.min(1, (ry - itCut) / itCut)));
+      const sz = satScale * ((rz <= itCut) ? 1 : Math.max(0, 1 - itRelax * Math.min(1, (rz - itCut) / itCut)));
+      it.x += ex * dt * sx;
+      it.y += ey * dt * sy;
+      it.z += ez * dt * sz;
+      if (kiGain > 1e-9) {
+        const maxI = (CFG.angAccelMax * itLimit) / kiGain;
+        it.x = Math.max(-maxI, Math.min(maxI, it.x));
+        it.y = Math.max(-maxI, Math.min(maxI, it.y));
+        it.z = Math.max(-maxI, Math.min(maxI, it.z));
+      } else {
+        it.set(0, 0, 0);
+      }
+    } else if (!this.armed) {
+      it.set(0, 0, 0);
+    }
+
+    /* P + I + FF − D, per axis, in angular-acceleration units. */
+    const ff = this._pidFf.set(ffGain * dTgt.x, ffGain * dTgt.y, ffGain * dTgt.z);
+    let ax = kpGain * ex + kiGain * it.x - kdGain * dGyro.x + ff.x;
+    let ay = kpGain * ey + kiGain * it.y - kdGain * dGyro.y + ff.y;
+    let az = kpGain * ez + kiGain * it.z - kdGain * dGyro.z + ff.z;
     const aLen = Math.sqrt(ax * ax + ay * ay + az * az);
     if (aLen > CFG.angAccelMax && aLen > 1e-9) {
       const s = CFG.angAccelMax / aLen;
@@ -376,16 +473,39 @@ window.Drone = (function () {
     const dmg = [1, 1, 1, 1];
     if (asym > 0 && corner >= 0 && corner < 4) dmg[corner] = 1 - asym;
 
-    let totalThrust = 0, sumX = 0, sumZ = 0, sumSpinT = 0, sumSpinOmega = 0;
+    /* Airmode: a differential demand larger than the collective would
+       drive a motor below zero and the mixer would clip it, so the quad
+       loses that corner's torque — that is why a quad without airmode
+       has no roll authority at zero throttle. Airmode holds the weakest
+       motor at idle and lifts the collective to pay for the difference,
+       so the differential survives the clamp. It sits behind the mixer:
+       the mixer decides what the differential needs, airmode pays for it. */
+    const diff = [0, 0, 0, 0];
+    let minDiff = 0;
     for (let i = 0; i < 4; i++) {
-      let cmd = collective
-              + dRoll  * (-MX[i] / arm)
+      diff[i] = dRoll  * (-MX[i] / arm)
               + dPitch * ( MZ[i] / arm)
               + dYaw   * SPIN[i];
-      cmd = Math.max(0, Math.min(1, cmd));
+      if (diff[i] < minDiff) minDiff = diff[i];
+    }
+    const airmode = (pid.airmode !== false);
+    const airIdle = (pid.airmodeIdle != null) ? pid.airmodeIdle : 0.03;
+    let collectiveOut = collective + (this._agBoost || 0);
+    if (this.armed && airmode && minDiff < 0) {
+      collectiveOut = Math.max(collectiveOut, airIdle - minDiff);
+    }
+    collectiveOut = Math.min(1, collectiveOut);
 
-      /* Motor + prop speed: first-order toward the commanded RPM, slower
-         spooling down than up (the prop is a flywheel under load). */
+    let totalThrust = 0, sumX = 0, sumZ = 0, sumSpinT = 0, sumSpinOmega = 0;
+    let clipped = 0;
+    for (let i = 0; i < 4; i++) {
+      const raw = collectiveOut + diff[i];
+      let cmd = Math.max(0, Math.min(1, raw));
+      if (cmd !== raw) clipped = 1;
+
+      /* Motor + prop speed: first-order toward the commanded RPM. A
+         modern ESC brakes the prop, so spin-down is no slower than
+         spin-up (CFG.physics.rotor.spinUp / spinDown). */
       const target = Math.sqrt(cmd);
       const tau = (target > this._rotorState[i]) ? spinUp : spinDown;
       const k = (tau > 0) ? (1 - Math.exp(-dt / tau)) : 1;
@@ -428,6 +548,12 @@ window.Drone = (function () {
     this.angVel.z += azz * dt;
 
     this._thrustState = totalThrust;
+    /* Remembered for the next step: conditional integration. An integrator
+       that keeps adding error while the mixer is clipped only winds up
+       torque the quad cannot deliver, and pays it back as overshoot. A
+       real FC gets the same protection from running its loop far faster
+       than the motors; this is the explicit version. */
+    this._mixerSat = clipped;
   };
 
   Drone.prototype.step = function (dt, input) {
@@ -518,11 +644,15 @@ window.Drone = (function () {
     /* Motor authority coupling — real quads lose rotational authority
        at low throttle. Applied to ACRO only (easy mode's alt-hold keeps
        motors spinning at ~50% RPM regardless of stick input, so
-       coupling to stick throttle would be wrong). See
-       CFG.feel.motorAuthority for tunables. */
+       coupling to stick throttle would be wrong) and to the legacy
+       plants only. See CFG.feel.motorAuthority for tunables. */
     const _mA = (CFG.feel && CFG.feel.motorAuthority) || { rollPitch: 1.0, yaw: 1.0 };
-    const _authRP  = (_mA.rollPitch + (1 - _mA.rollPitch) * thr) * _armAuth;
-    const _authYaw = (_mA.yaw       + (1 - _mA.yaw)       * thr) * _armAuth;
+    /* The rotor plant gets its low-throttle authority from airmode and its
+       damage authority from the per-motor thrust loss, so scaling the rate
+       target by throttle and by damage stage on top of that would count the
+       same effect twice. The legacy plants still need both. */
+    const _authRP  = _rotorMode ? 1 : (_mA.rollPitch + (1 - _mA.rollPitch) * thr) * _armAuth;
+    const _authYaw = _rotorMode ? 1 : (_mA.yaw       + (1 - _mA.yaw)       * thr) * _armAuth;
 
     const e = CFG.expo;
     const easyActive = !!(this.easyMode && this.armed);
@@ -631,8 +761,11 @@ window.Drone = (function () {
 
     /* ---- rotor inertia on the rate loop -----------------------------
        A commanded rate is not a rate: the motors need tens of ms to change
-       RPM, so the body rate ramps into the target instead of jumping. */
-    const _rateLag = (CFG.esc && CFG.esc.rateLag > 0) ? CFG.esc.rateLag : 0;
+       RPM, so the body rate ramps into the target instead of jumping.
+       Only the legacy plants need this lag injected: the rotor plant has a
+       real rate PID (_stepRotors) whose P/D/FF terms shape the approach,
+       so lagging the setpoint first would be a second, artificial lag. */
+    const _rateLag = (!_rotorMode && CFG.esc && CFG.esc.rateLag > 0) ? CFG.esc.rateLag : 0;
     if (_rateLag > 0) {
       this._rateTarget.lerp(this._target, 1 - Math.exp(-dt / _rateLag));
     } else {

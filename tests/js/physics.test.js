@@ -86,8 +86,11 @@ test('roll input produces the documented rate sign', () => {
   assert.ok(d.angVel.z < -0.5, 'expected negative Z rate for right roll, got ' + d.angVel.z);
 });
 
-test('low throttle has less rotational authority than full throttle', () => {
-  const { Drone } = setup();
+test('legacy plants: low throttle has less rotational authority than full throttle', () => {
+  const { ctx, Drone } = setup();
+  /* The rate target is scaled by throttle in the legacy plants. The rotor
+     plant gets that coupling from the physics (and airmode removes it). */
+  ctx.CFG.physics.model = 'SIMPLE';
   const low = airborne(Drone);
   const high = airborne(Drone);
   fly(low, 0.3, 1 / 240, input({ throttle: 0.05, roll: 1 }));
@@ -277,6 +280,134 @@ test('rotor plant: the rate loop settles on the commanded rate', () => {
   fly(d, 0.6, 1 / 240, input({ throttle: 0.75, roll: 1 }));
   assert.ok(Math.abs(d.angVel.z - d._rateTarget.z) < 0.6,
     'realised rate ' + d.angVel.z.toFixed(2) + ' vs target ' + d._rateTarget.z.toFixed(2));
+});
+
+test('rotor plant: the rate PID trims a damaged airframe', () => {
+  const { CFG, Drone } = setup();
+  const pid = CFG.physics.rotor.pid;
+  function flyDamaged(ki) {
+    pid.ki = ki;
+    const d = airborne(Drone, 30);
+    d.damage.stage = 1;
+    d.damage.corner = 0;
+    d.damage.arm = true;
+    fly(d, 3, 1 / 240, input({ throttle: 0.7 }));
+    return d;
+  }
+  const withI = flyDamaged(pid.ki);
+  const noI = flyDamaged(0);
+  pid.ki = 25;
+  const residual = Math.max(Math.abs(withI.angVel.x), Math.abs(withI.angVel.z));
+  assert.ok(residual < 0.15,
+    'I-term should hold the rate at zero under damage: ' + residual.toFixed(2) + ' rad/s');
+  assert.ok(Math.abs(noI.angVel.z) > 1.0,
+    'P alone leaves a steady rate under damage: ' + noI.angVel.z.toFixed(2));
+  assert.ok(Math.max.apply(null, withI.rotorRpm) - Math.min.apply(null, withI.rotorRpm) > 1000,
+    'the three good corners must carry the dead one');
+});
+
+test('rotor plant: the I-term cannot wind up past its share of the authority', () => {
+  const { CFG, Drone } = setup();
+  const pid = CFG.physics.rotor.pid;
+  const d = airborne(Drone, 30);
+  d.damage.stage = 3;
+  d.damage.corner = 1;
+  d.damage.arm = true;
+  /* Full sticks on every axis, with a motor down: the error is far larger
+     than the props can answer, so the integral must stop at its clamp. */
+  fly(d, 2, 1 / 240, input({ throttle: 0.75, roll: 1, pitch: 1, yaw: 1 }));
+  const maxI = CFG.angAccelMax * pid.itermLimit / pid.ki;
+  ['x', 'y', 'z'].forEach(function (axis) {
+    assert.ok(Math.abs(d._pidI[axis]) <= maxI + 1e-9,
+      'integral ' + axis + ' = ' + d._pidI[axis].toFixed(2) + ' beyond clamp ' + maxI.toFixed(2));
+  });
+});
+
+test('rotor plant: feedforward acts on the setpoint, not on the error', () => {
+  const { CFG, Drone } = setup();
+  const pid = CFG.physics.rotor.pid;
+  function kick(ff) {
+    pid.ff = ff;
+    const d = airborne(Drone, 30);
+    fly(d, 0.3, 1 / 240, input({ throttle: 0.7 }));
+    fly(d, 3 / 240, 1 / 240, input({ throttle: 0.7, roll: 0.3 }));
+    return d._pidFf.z;
+  }
+  const on = kick(pid.ff);
+  const off = kick(0);
+  pid.ff = 0.012;
+  assert.ok(Math.abs(off) < 1e-9,
+    'with no feedforward gain there is no feedforward term, got ' + off);
+  assert.ok(Math.abs(on) > 0.5,
+    'feedforward should lead the stick step, got ' + on.toFixed(2) + ' rad/s²');
+});
+
+test('rotor plant: airmode keeps the weakest motor off the stop', () => {
+  const { CFG, Drone } = setup();
+  const pid = CFG.physics.rotor.pid;
+  function roll(airmode) {
+    pid.airmode = airmode;
+    const d = airborne(Drone, 30);
+    fly(d, 0.35, 1 / 240, input({ throttle: 0, roll: 1 }));
+    return { thrust: d._thrustState, idle: Math.min.apply(null, d._rotorState) };
+  }
+  const on = roll(true);
+  const off = roll(false);
+  pid.airmode = true;
+  assert.ok(on.idle > 0.1, 'airmode should hold every motor off the stop: ' + on.idle.toFixed(2));
+  assert.equal(off.idle, 0, 'without airmode the mixer clips a motor to zero');
+  assert.ok(on.thrust > off.thrust * 3,
+    'airmode should keep thrust under a zero-throttle roll: '
+    + on.thrust.toFixed(2) + ' N vs ' + off.thrust.toFixed(2) + ' N');
+});
+
+test('rotor plant: anti-gravity adds collective on a throttle jab', () => {
+  const { CFG, Drone } = setup();
+  const pid = CFG.physics.rotor.pid;
+  function jab(gain) {
+    pid.antiGravity = gain;
+    const d = airborne(Drone, 30);
+    fly(d, 0.8, 1 / 240, hoverStick());
+    fly(d, 0.08, 1 / 240, input({ throttle: 0.55 }));
+    return d._thrustState;
+  }
+  const on = jab(pid.antiGravity);
+  const off = jab(0);
+  pid.antiGravity = 0.35;
+  assert.ok(on > off * 1.03,
+    'anti-gravity should lead the spool-up: ' + on.toFixed(2) + ' N vs ' + off.toFixed(2) + ' N');
+});
+
+test('rotor plant: throttle does not discount the rate target', () => {
+  const { CFG, Drone } = setup();
+  const low = airborne(Drone, 30);
+  fly(low, 0.2, 1 / 240, input({ throttle: 0.05, roll: 1 }));
+  /* Full stick is full rate at any throttle; only pack sag (the voltage
+     factor) may take a little off it, never the motorAuthority coupling. */
+  const expected = CFG.maxRates.roll * Math.PI / 180 * CFG.rcRate;
+  assert.ok(Math.abs(low._rateTarget.z) > expected * 0.98,
+    'zero-ish throttle should still command full rate: '
+    + Math.abs(low._rateTarget.z).toFixed(2) + ' vs ' + expected.toFixed(2) + ' rad/s');
+});
+
+test('the rate setpoint lag applies to the legacy plants only', () => {
+  const { CFG, Drone } = setup();
+  const d = airborne(Drone, 30);
+  fly(d, 1 / 240, 1 / 240, input({ throttle: 0.75, roll: 1 }));
+  assert.ok(Math.abs(d._rateTarget.z - d._target.z) < 1e-9,
+    'the rotor plant feeds its PID the stick target directly');
+
+  ['6DOF', 'SIMPLE'].forEach(function (model) {
+    CFG.physics.model = model;
+    CFG.physics.sixDof = (model === '6DOF');
+    const old = airborne(Drone, 30);
+    fly(old, 1 / 240, 1 / 240, input({ throttle: 0.75, roll: 1 }));
+    assert.ok(Math.abs(old._target.z - old._rateTarget.z) > 1.0,
+      model + ' should still lag the rate target: target '
+      + old._target.z.toFixed(2) + ', lagged ' + old._rateTarget.z.toFixed(2));
+  });
+  CFG.physics.model = 'ROTOR';
+  CFG.physics.sixDof = false;
 });
 
 test('reset() restores spawn state after a crash', () => {
