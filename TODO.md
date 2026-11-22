@@ -269,12 +269,27 @@ what the sticks feel like; each one lands on its own with tests.
       vortex-ring band around `J ≈ -0.25` (the prop sits in its own wake) and
       loses ~30 % until the descent is fast enough to leave the ring. That
       replaces the legacy `CFG.propWashGain` wobble as the REAL plant's VRS.
-- [ ] Ground and wall effect in the rotor plant
-      Skipped in REAL today (`!_rotorMode` guards the old random wobble).
-      Real behaviour: extra thrust inside ~1 rotor diameter, the
-      cushion-then-suck-down transition on landing, recirculation on takeoff
-      and a lateral push near walls/ceilings. Implement as a thrust
-      multiplier from AGL and disc loading rather than an acceleration fudge.
+- [x] Ground and wall effect in the rotor plant
+      `_stepRotors()` now scales each prop by a proximity multiplier instead
+      of the legacy random wobble (`!_rotorMode` still guards that fudge, so
+      REAL no longer skips the effect):
+      `CFG.physics.rotor.proximity` holds `ground`, `wall` and `ceiling`.
+      Ground effect is per prop, from that prop's own height above the
+      surface under it (arm offset rotated into the world), shaped like the
+      source-sink model — extra thrust rising as the disc closes on the
+      surface, rolling back inside `peakHeight` as the outflow recirculates.
+      That roll-over is the cushion-then-suck-down transition on landing and
+      takeoff, and because the heights differ once the airframe is tilted,
+      the low-side props gain more: a real torque that tips a quad off a pad
+      or a curb. Disc loading (`discLoading`, scaled by RPM²) blends the
+      effect down for a slowly turning disc. Walls and ceilings are found
+      from the same colliders the model already collides with
+      (`_surfaceProximity()`), add a small thrust gain/loss, and push the
+      airframe through `_proxAccel` — outwash with nowhere to go shoves away
+      from a wall, a starved inlet under a ceiling pulls the airframe up.
+      Covered by `tests/js/physics.test.js` (ground effect on the pad, the
+      cushion peak above the pad, asymmetric tip on a banked quad, wall push
+      and ceiling thrust loss).
 - [ ] Angle-of-attack aerodynamics (lift, pitch-up, prop-disc moment)
       Drag is three fixed multipliers (`CFG.aero.bodyDrag`) on body velocity:
       no AoA dependence, no lift from the frame, no prop-disc moment. A real

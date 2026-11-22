@@ -498,3 +498,112 @@ test('reset() restores spawn state after a crash', () => {
   assert.equal(d.crashSeverity, 0);
   assert.equal(d.voltage, CFG.battery.cells * 4.2);
 });
+
+/* ---- ground and wall effect (rotor plant) ------------------------------ */
+
+test('rotor plant: ground effect adds thrust on the pad', () => {
+  const { CFG, Drone } = setup();
+  /* Hold the airframe at the height being measured: a real quad would climb
+     out of the effect zone, and the point here is the thrust at that height. */
+  function hoverAt(y) {
+    const d = airborne(Drone, y);
+    for (let i = 0; i < 480; i++) {
+      d.position.y = y;
+      d.velocity.set(0, 0, 0);
+      d.step(1 / 240, hoverStick());
+    }
+    return d._thrustState;
+  }
+  const pad = hoverAt(CFG.groundY + 0.02);
+  const free = hoverAt(8);
+  assert.ok(pad > free * 1.04,
+    'a disc close to the ground makes more thrust: '
+    + pad.toFixed(2) + ' N on the pad vs ' + free.toFixed(2) + ' N in free air');
+});
+
+test('rotor plant: ground effect peaks just above the pad (cushion then suck-down)', () => {
+  const { Drone } = setup();
+  const d = new Drone();
+  const peak = d._groundEffectGain(0.25, 1);
+  const pad  = d._groundEffectGain(0.02, 1);
+  const far  = d._groundEffectGain(3.0, 1);
+  assert.ok(peak > pad,
+    'the cushion peaks before the pad, then recirculation eats it: '
+    + peak.toFixed(3) + ' vs ' + pad.toFixed(3));
+  assert.ok(peak > far * 10, 'and it must vanish in free air, got ' + far.toFixed(4));
+});
+
+test('rotor plant: a banked quad on the pad is tipped by the low-side ground effect', () => {
+  const { ctx, Drone } = setup();
+  function kick(tilt) {
+    const d = airborne(Drone, 0.2);
+    d.quat.setFromEuler(new ctx.THREE.Euler(0, 0, tilt));
+    /* Spin the motors up and hold the airframe still, then look at the
+       torque of one clean step from rest. */
+    for (let i = 0; i < 60; i++) {
+      d.position.y = 0.2;
+      d.velocity.set(0, 0, 0);
+      d._stepRotors(1 / 240, 10, 12);
+    }
+    d.angVel.set(0, 0, 0);
+    d._stepRotors(1 / 240, 10, 12);
+    return d;
+  }
+  /* Rolled 15°, the props on one side sit closer to the ground and gain
+     more thrust, which is a roll torque the airframe did not ask for. */
+  const tilted = kick(15 * Math.PI / 180);
+  const level  = kick(0);
+  assert.ok(Math.abs(tilted.angVel.z) > Math.abs(level.angVel.z) + 1e-3,
+    'the low-side discs should roll the airframe: ' + tilted.angVel.z.toFixed(4)
+    + ' vs ' + level.angVel.z.toFixed(4) + ' rad/s');
+});
+
+test('rotor plant: a wall pushes the airframe away from it', () => {
+  const { CFG, Drone } = setup();
+  /* Widen the wall reach so the test does not have to sit the props
+     against the surface (the real reach is ~1 prop diameter). */
+  CFG.physics.rotor.proximity.wall.reach = 4;
+  function hover(wall) {
+    const d = airborne(Drone, 2);
+    d.colliders = wall
+      ? [{ type: 'box', x: 0.35, z: 0, w: 0.2, d: 6, h: 4, yMin: 0, cos: 1, sin: 0 }]
+      : [];
+    fly(d, 0.4, 1 / 240, hoverStick());
+    return d;
+  }
+  const near = hover(true);
+  const free = hover(false);
+  assert.ok(near._proxAccel.x < -0.2,
+    'the blocked outwash should push away from the wall, got '
+    + near._proxAccel.x.toFixed(2) + ' m/s²');
+  assert.ok(near.velocity.x < free.velocity.x - 0.02,
+    'and the push should show up in the velocity: '
+    + near.velocity.x.toFixed(3) + ' vs ' + free.velocity.x.toFixed(3) + ' m/s');
+  assert.ok(Math.abs(free._proxAccel.x) < 1e-6, 'no wall, no push');
+});
+
+test('rotor plant: a ceiling starves the props and pulls the airframe up', () => {
+  const { Drone } = setup();
+  function hover(ceiling) {
+    const d = airborne(Drone, 2);
+    d.colliders = ceiling
+      ? [{ type: 'box', x: 0, z: 0, w: 6, d: 6, h: 2.4, yMin: 2.06, cos: 1, sin: 0 }]
+      : [];
+    /* Hold the airframe under the surface: the starved disc would sink out
+       of the ceiling's reach otherwise. */
+    for (let i = 0; i < 240; i++) {
+      d.position.y = 2;
+      d.velocity.set(0, 0, 0);
+      d.step(1 / 240, hoverStick());
+    }
+    return d;
+  }
+  const under = hover(true);
+  const free = hover(false);
+  assert.ok(under._thrustState < free._thrustState * 0.98,
+    'the inlet has nowhere to breathe: ' + under._thrustState.toFixed(2)
+    + ' N vs ' + free._thrustState.toFixed(2) + ' N');
+  assert.ok(under._proxAccel.y > 0.05,
+    'and the low pressure should pull it toward the ceiling, got '
+    + under._proxAccel.y.toFixed(3) + ' m/s²');
+});

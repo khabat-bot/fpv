@@ -145,6 +145,62 @@ window.CFG = {
         antiGravityDecay: 0.06,
         airmode: true,
         airmodeIdle: 0.03
+      },
+
+      /* ---- ground / wall / ceiling effect ---------------------------
+         A rotor does not make the same thrust in free air and near a
+         surface. The surface constrains the induced velocity, so a disc
+         inside about one rotor diameter of the ground or of a wall makes
+         MORE thrust, and one under a ceiling makes LESS (the inlet is
+         starved). This is a thrust multiplier on each prop, not an
+         acceleration fudge: it flows through the same mixer, torque
+         balance and RPM/authority coupling as free-air thrust, and the
+         ground factor is evaluated per prop from that prop's own height.
+         A tilted airframe therefore gains more on its low side and tips
+         off a pad or a curb the way a real quad does, and a prop near a
+         wall leans the airframe away from it through the same thrust.
+           enabled:     master switch for the whole proximity model
+           ground:
+             reach:       h/R at which the extra thrust has died out
+                          (h = prop height, R = rotor radius)
+             gainMax:     extra thrust fraction of one disc at the peak
+             peakHeight:  h/R of the cushion peak. Below it the outflow
+                          recirculates and the extra thrust falls back
+                          toward `recircLoss` of the peak — the
+                          cushion-then-suck-down transition felt when
+                          settling onto the pad.
+             recircLoss:  fraction of the peak gain lost at the pad
+             discLoading: 0..1, how strongly low RPM (low disc loading)
+                          scales the effect down. A slowly turning disc
+                          has little induced velocity to constrain.
+           wall:        reach in rotor diameters; gain is the extra thrust
+                        on a disc pushing against the wall, push is the
+                        fraction of the thrust reacted away from it
+                        (the outwash has nowhere to go).
+           ceiling:     reach in rotor diameters; loss is the thrust lost
+                        with the disc hard against a ceiling, suck is the
+                        fraction of thrust pulling the airframe into it.
+           maxPush:     m/s² cap on the combined lateral/vertical push. */
+      proximity: {
+        enabled: true,
+        ground: {
+          reach: 2.0,
+          gainMax: 0.28,
+          peakHeight: 0.25,
+          recircLoss: 0.45,
+          discLoading: 0.5
+        },
+        wall: {
+          reach: 1.25,
+          gain: 0.06,
+          push: 0.35
+        },
+        ceiling: {
+          reach: 1.0,
+          loss: 0.25,
+          suck: 0.12
+        },
+        maxPush: 12
       }
     }
   },
