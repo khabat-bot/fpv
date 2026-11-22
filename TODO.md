@@ -317,7 +317,11 @@ what the sticks feel like; each one lands on its own with tests.
       The inertia tensor is diagonal with the CG at the geometric centre, and
       `_collideBVHOnce()` uses a scalar `I = 0.003` for every impact. Battery
       placement on a real quad moves the CG (that is how you trim one), and an
-      off-centre hit rotates about the true tensor.
+      off-centre hit rotates about the true tensor. The diagonal terms are now
+      the component sum for a 5" airframe at this mass
+      (`CFG.physics.inertia`, 1.6-2.8e-3 kg·m²); the vector used to be
+      2.5-3x that, which is why a full-rate yaw took ~0.4 s to stop. Covered by
+      the released-yaw and full-stick-rate tests in `tests/js/physics.test.js`.
 - [ ] Geometric crash damage instead of scripted stages
       `CFG.crashSeverity.stages` are thrust/wobble scales. Real damage is per
       part: a prop-tip strike bends or breaks that prop (thrust + balance), a

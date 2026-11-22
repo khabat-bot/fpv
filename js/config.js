@@ -45,7 +45,17 @@ window.CFG = {
      sixDof is kept in sync by js/main.js for older settings stores.
        inertia:    kg·m² about each body axis. Yaw inertia is the largest
                    (the mass is spread out in the prop plane), which is
-                   why a real quad yaws slower than it rolls.
+                   why a real quad yaws slower than it rolls. The values
+                   are the component sum for a 5" airframe at this mass:
+                   motors and props as point masses at the arm ends plus
+                   the frame, which lands roll/pitch near 1.6-1.8e-3 and
+                   yaw near 2.8e-3 kg·m² for a ~700 g 5" quad. They used
+                   to be 2.5-3x that, which made a full-rate yaw take ~0.4 s
+                   to stop (a real quad brakes in about half of that)
+                   and left roll/pitch authority short of the commanded
+                   max rate. The rate PID works in angular acceleration,
+                   so correcting the tensor changes what the props can
+                   physically deliver, not the stick feel of roll/pitch.
        torqueRef:  inertia the rate gains are calibrated against, so RATE
                    and 6-DOF feel the same at the sticks
        maxTorque:  N·m per axis — motor torque limit
@@ -60,8 +70,8 @@ window.CFG = {
   physics: {
     model: 'ROTOR',
     sixDof: false,
-    inertia: { roll: 0.0042, pitch: 0.0056, yaw: 0.0085 },
-    torqueRef: 0.0042,
+    inertia: { roll: 0.0016, pitch: 0.0018, yaw: 0.0028 },
+    torqueRef: 0.0016,
     maxTorque: 0.9,
     gyroDrift: 0.02,
     rotor: {

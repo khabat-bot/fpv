@@ -291,7 +291,14 @@ test('rotor plant: the rate PID trims a damaged airframe', () => {
     d.damage.stage = 1;
     d.damage.corner = 0;
     d.damage.arm = true;
-    fly(d, 3, 1 / 240, input({ throttle: 0.7 }));
+    /* Hold the airframe up: at 0.7 throttle a stage-1 quad sinks, and a
+       landing/crash disarms it and zeroes every motor — which would make
+       the rpm-spread assertion below pass for the wrong reason. */
+    for (let i = 0; i < 240 * 3; i++) {
+      d.position.y = 30;
+      d.velocity.set(0, 0, 0);
+      d.step(1 / 240, input({ throttle: 0.7 }));
+    }
     return d;
   }
   const withI = flyDamaged(pid.ki);
@@ -383,7 +390,11 @@ test('rotor plant: centring the sticks stops a combined roll/pitch/yaw manoeuvre
      torque, which then fed back through the rate loop and left the quad
      rolling away on its own long after the sticks were centred. */
   fly(d, 0.8, 1 / 240, input({ throttle: 0.7, roll: 1, pitch: 1, yaw: 1 }));
-  fly(d, 0.6, 1 / 240, input({ throttle: 0.55 }));
+  /* The integral wound during that 3-axis brake has to unwind through the
+     same loop that is holding zero rate, so an extreme full-stick tumble
+     takes about 1.5 s to come fully to rest — the fast part is over in
+     0.2 s (see the released-yaw test). */
+  fly(d, 1.5, 1 / 240, input({ throttle: 0.55 }));
   const rate = d.angVel.length();
   assert.ok(rate < 0.5,
     'the rate loop should have stopped the rotation, got ' + rate.toFixed(2) + ' rad/s');
@@ -656,4 +667,43 @@ test('rotor plant: ground.reach = 0 turns off only the ground effect', () => {
   assert.ok(ceil._proxAccel.y > 0.05,
     'ceiling suck must not depend on ground.reach, got '
     + ceil._proxAccel.y.toFixed(3) + ' m/s²');
+});
+
+test('rotor plant: a released yaw stops in a real quad time', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone, 30);
+  fly(d, 0.6, 1 / 240, hoverStick());
+  fly(d, 0.5, 1 / 240, input({ throttle: 1 / 5.2, yaw: 1 }));
+  const peak = Math.abs(d.angVel.y);
+  assert.ok(peak > 5, 'expected a full-rate yaw, got ' + peak.toFixed(2) + ' rad/s');
+
+  /* Yaw authority is prop drag torque, so it is the slowest axis to start
+     and to stop — but a real 5" brakes from full yaw in about 0.2 s and
+     coasts well under a quarter turn. The airframe inertia sets that:
+     yaw torque over the tensor, not a tuned damping term. */
+  let t = 0, stop = null, coast = 0;
+  for (let i = 0; i < 240 * 2; i++) {
+    d.step(1 / 240, hoverStick());
+    t += 1 / 240;
+    const w = Math.abs(d.angVel.y);
+    coast += w / 240;
+    if (stop === null && w <= peak * 0.05) stop = t;
+  }
+  assert.ok(stop !== null && stop < 0.30,
+    'yaw took ' + (stop === null ? '>2.0' : stop.toFixed(2)) + ' s to stop');
+  const deg = coast * 180 / Math.PI;
+  assert.ok(deg < 90, 'yaw coasted ' + deg.toFixed(0) + ' deg after release');
+});
+
+test('rotor plant: full stick reaches the commanded max rate', () => {
+  const { CFG, Drone } = setup();
+  const d = airborne(Drone, 30);
+  fly(d, 0.6, 1 / 240, input({ throttle: 1 / 5.2, roll: 1 }));
+  const target = CFG.maxRates.roll * Math.PI / 180 * CFG.rcRate;
+  const rate = Math.abs(d.angVel.z);
+  assert.ok(rate > target * 0.85,
+    'full stick should reach the commanded rate: ' + rate.toFixed(2)
+    + ' vs ' + target.toFixed(2) + ' rad/s');
+  assert.ok(rate < target * 1.2,
+    'and not overshoot it: ' + rate.toFixed(2) + ' vs ' + target.toFixed(2) + ' rad/s');
 });

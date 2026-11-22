@@ -1079,9 +1079,16 @@ window.Drone = (function () {
       this._target.set(corrX, -yawRate, corrZ);
     } else {
       /* ===== ACRO MODE (existing behaviour, disarm gating preserved) ===== */
-      const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate * _groundAuth * _authVolt * _authRP  : 0);
-      const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate * _groundAuth * _authVolt * _authRP  : 0);
-      const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate * _groundAuth * _authVolt * _authYaw : 0);
+      /* A stick asks for a RATE. The legacy plants have no torque model, so
+         they discount the setpoint by pack voltage as a stand-in for lost
+         authority; the rotor plant must not — the flight controller commands
+         the rate the pilot asked for and the props fall short of it
+         physically. Discounting the setpoint there made the achieved rate
+         OVERSHOOT the sagged target at full stick. */
+      const authTarget = _rotorMode ? 1 : _authVolt;
+      const rRate = (this.armed ? curve(input.roll,  e) * CFG.maxRates.roll  * DEG * CFG.rcRate * _groundAuth * authTarget * _authRP  : 0);
+      const pRate = (this.armed ? curve(input.pitch, e) * CFG.maxRates.pitch * DEG * CFG.rcRate * _groundAuth * authTarget * _authRP  : 0);
+      const yRate = (this.armed ? curve(input.yaw,   e) * CFG.maxRates.yaw   * DEG * CFG.rcRate * _groundAuth * authTarget * _authYaw : 0);
 
       this._target.set(-pRate, -yRate, -rRate);
     }
