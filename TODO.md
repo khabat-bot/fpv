@@ -274,8 +274,9 @@ what the sticks feel like; each one lands on its own with tests.
       of the legacy random wobble (`!_rotorMode` still guards that fudge, so
       REAL no longer skips the effect):
       `CFG.physics.rotor.proximity` holds `ground`, `wall` and `ceiling`.
-      Ground effect is per prop, from that prop's own height above the
-      surface under it (arm offset rotated into the world), shaped like the
+      The ground height under the airframe is sampled once per step (it is
+      a BVH raycast on a GLB map) and each prop uses its own height above
+      that plane (arm offset rotated into the world), shaped like the
       source-sink model — extra thrust rising as the disc closes on the
       surface, rolling back inside `peakHeight` as the outflow recirculates.
       That roll-over is the cushion-then-suck-down transition on landing and
@@ -284,7 +285,9 @@ what the sticks feel like; each one lands on its own with tests.
       or a curb. Disc loading (`discLoading`, scaled by RPM²) blends the
       effect down for a slowly turning disc. Walls and ceilings are found
       from the same colliders the model already collides with
-      (`_surfaceProximity()`), add a small thrust gain/loss, and push the
+      (`_surfaceProximity()`) and are gated by their own `reach`, so
+      `ground.reach = 0` leaves them running; they add a small thrust
+      gain/loss and push the
       airframe through `_proxAccel` — outwash with nowhere to go shoves away
       from a wall, a starved inlet under a ceiling pulls the airframe up.
       Covered by `tests/js/physics.test.js` (ground effect on the pad, the

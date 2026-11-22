@@ -162,7 +162,8 @@ window.CFG = {
            enabled:     master switch for the whole proximity model
            ground:
              reach:       h/R at which the extra thrust has died out
-                          (h = prop height, R = rotor radius)
+                          (h = prop height, R = rotor radius). 0 turns
+                          the ground term off and leaves wall/ceiling on.
              gainMax:     extra thrust fraction of one disc at the peak
              peakHeight:  h/R of the cushion peak. Below it the outflow
                           recirculates and the extra thrust falls back

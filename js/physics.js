@@ -511,15 +511,25 @@ window.Drone = (function () {
     const prox = this._proximityCfg();
     const proxOn = prox.enabled;
     const Rrot = Math.max(0.01, adv.diameterM * 0.5);
+    const groundOn = proxOn && prox.ground.reach > 0;
     let wallGain = 1, wallPush = 0, wallNx = 0, wallNz = 0;
     let ceilFactor = 1, ceilSuck = 0;
-    if (proxOn && prox.ground.reach > 0) {
-      const reach = Math.max(Rrot * prox.ground.reach +
-                            this._sphereScale * Rrot,
-                            prox.wall.reach * adv.diameterM,
-                            prox.ceiling.reach * adv.diameterM);
+    const wr = proxOn ? prox.wall.reach * adv.diameterM : 0;
+    const cr = proxOn ? prox.ceiling.reach * adv.diameterM : 0;
+    /* Ground height is sampled ONCE per step, at the airframe centre: on a
+       GLB map `getFloorY` is a BVH raycast, so asking it per prop would
+       quadruple that cost for no extra information on a flat surface. Each
+       prop still uses its own height above that plane (the arm offset
+       rotated into the world), so a tilted airframe gains more on its low
+       side and sees the same low-side torque. */
+    const floorY = groundOn ? this.getFloorY(this.position.x, this.position.z) : 0;
+    /* Walls and ceilings come from the collider list, not from the ground,
+       so they stay live even when ground.reach is 0. */
+    if (wr > 1e-6 || cr > 1e-6) {
+      const reach = Math.max(wr, cr, groundOn
+        ? Rrot * prox.ground.reach + this._sphereScale * Rrot
+        : 0);
       const sp = this._surfaceProximity(reach);
-      const wr = prox.wall.reach * adv.diameterM;
       if (wr > 1e-6 && isFinite(sp.wallDist) && sp.wallDist < wr) {
         const k = 1 - sp.wallDist / wr;
         wallGain = 1 + prox.wall.gain * k * k;
@@ -527,7 +537,6 @@ window.Drone = (function () {
         wallNx = sp.wallNx;
         wallNz = sp.wallNz;
       }
-      const cr = prox.ceiling.reach * adv.diameterM;
       if (cr > 1e-6 && isFinite(sp.ceilGap) && sp.ceilGap < cr) {
         const k = 1 - sp.ceilGap / cr;
         ceilFactor = Math.max(0, 1 - prox.ceiling.loss * k * k);
@@ -805,10 +814,9 @@ window.Drone = (function () {
          props gain more when the airframe is tilted, which is a real torque
          on the body, not a scripted wobble. */
       let geF = 0;
-      if (proxOn) {
+      if (groundOn) {
         const off = this._tmpV.set(MX[i], 0, MZ[i]).applyQuaternion(this.quat);
-        const hAbove = Math.max(0, (this.position.y + off.y) -
-          this.getFloorY(this.position.x + off.x, this.position.z + off.z));
+        const hAbove = Math.max(0, (this.position.y + off.y) - floorY);
         geF = this._groundEffectGain(hAbove / Rrot, n * n, prox.ground);
       }
 

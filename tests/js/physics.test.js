@@ -607,3 +607,53 @@ test('rotor plant: a ceiling starves the props and pulls the airframe up', () =>
     'and the low pressure should pull it toward the ceiling, got '
     + under._proxAccel.y.toFixed(3) + ' m/s²');
 });
+
+test('rotor plant: ground height is sampled once per step, at the airframe', () => {
+  const { Drone } = setup();
+  const d = airborne(Drone, 0.2);
+  const calls = [];
+  const orig = d.getFloorY.bind(d);
+  d.getFloorY = function (x, z) {
+    calls.push([x, z]);
+    return orig(x, z);
+  };
+  const steps = 10;
+  for (let i = 0; i < steps; i++) {
+    d.position.set(0.3, 0.2, -0.4);
+    d.velocity.set(0, 0, 0);
+    d._stepRotors(1 / 240, 10, 12);
+  }
+  /* A GLB map answers getFloorY with a raycast, so it must be one sample
+     per step (plus none for the four props). */
+  assert.equal(calls.length, steps,
+    'expected one ground sample per step, got ' + calls.length + ' for '
+    + steps + ' steps');
+  assert.ok(calls.every((p) => p[0] === 0.3 && p[1] === -0.4),
+    'the sample must be the airframe centre, got ' + JSON.stringify(calls[0]));
+});
+
+test('rotor plant: ground.reach = 0 turns off only the ground effect', () => {
+  const { CFG, Drone } = setup();
+  CFG.physics.rotor.proximity.ground.reach = 0;
+  CFG.physics.rotor.proximity.wall.reach = 4;
+
+  /* Wall: still shoved away from it. */
+  const wall = airborne(Drone, 2);
+  wall.colliders = [{ type: 'box', x: 0.35, z: 0, w: 0.2, d: 6, h: 4, yMin: 0, cos: 1, sin: 0 }];
+  fly(wall, 0.4, 1 / 240, hoverStick());
+  assert.ok(wall._proxAccel.x < -0.2,
+    'wall push must not depend on ground.reach, got '
+    + wall._proxAccel.x.toFixed(2) + ' m/s²');
+
+  /* Ceiling: still starves the inlets and pulls the airframe up. */
+  const ceil = airborne(Drone, 2);
+  ceil.colliders = [{ type: 'box', x: 0, z: 0, w: 6, d: 6, h: 2.4, yMin: 2.06, cos: 1, sin: 0 }];
+  for (let i = 0; i < 240; i++) {
+    ceil.position.y = 2;
+    ceil.velocity.set(0, 0, 0);
+    ceil.step(1 / 240, hoverStick());
+  }
+  assert.ok(ceil._proxAccel.y > 0.05,
+    'ceiling suck must not depend on ground.reach, got '
+    + ceil._proxAccel.y.toFixed(3) + ' m/s²');
+});
