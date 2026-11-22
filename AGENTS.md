@@ -45,6 +45,22 @@ fails `tests/js/structure.test.js` instead of only failing in a browser.
   needed, with `/bin/inoty "<message>"`. It only exists on the owner's
   machine: if it is missing or fails, ignore it and carry on with the
   normal reply; do not report the tooling failure as a blocker.
+- Fallback when `/bin/inoty` does not exist **and** the owner has handed you
+  a relay URL in this conversation: push the same message with
+  `curl -d '<json>' <relay>`. It is an ntfy-style relay, so either a plain
+  string or this JSON works:
+
+  ```sh
+  curl -d '{"title": "<short title>", "body": "<what happened>", "sound": "default"}' <relay>
+  ```
+
+  Optional JSON fields: `delay`, `id`, `actions` (e.g.
+  `[{"id":"yes","title":"Deploy","url":"https://example.com/deploy"}]`) and
+  `data`. Use it only for the finish/decision ping, never as a chat channel.
+  The relay URL is an owner-provided secret: never write it into a file, a
+  commit or the reply, never commit a script that contains it, and do not
+  reuse one from an earlier conversation — wait until the owner supplies it
+  again. If no relay was provided, skip the notification and just answer.
 
 ## Architecture
 
