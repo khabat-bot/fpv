@@ -13,6 +13,10 @@
        spin-up/down lag, advance-ratio loss with airspeed, a geometric
        mixer, mixer saturation, gyroscopic coupling and thrust-based
        current draw
+     • ground / wall / ceiling effect in the rotor plant: a per-prop thrust
+       multiplier from that prop's height above the surface under it
+       (cushion then recirculation at the pad) plus an airframe-level wall
+       and ceiling push
      • progressive damage: staged thrust/authority loss, asymmetric thrust
        from a dead corner, and a tremor that grows with the damage
    ========================================================================= */
@@ -98,6 +102,7 @@ window.Drone = (function () {
     this._collPrev = 0;                     /* last collective - anti-gravity */
     this._agBoost = 0;                      /* anti-gravity collective kick */
     this._mixerSat = 0;                     /* mixer clipped last step      */
+    this._proxAccel = new THREE.Vector3();  /* ground/wall/ceiling push      */
     this._rateTarget  = new THREE.Vector3();   /* lagged rate command   */
     this._gyroBias    = new THREE.Vector3();   /* rad/s — 6-DOF drift   */
     this._gyroMeas    = new THREE.Vector3();   /* angVel + gyro bias    */
@@ -310,6 +315,122 @@ window.Drone = (function () {
     return { ct: propCtFactor(J, a), cq: propCqFactor(J, a), jZero: a.jZero };
   };
 
+  /* Ground / wall / ceiling tunables with fallbacks. */
+  Drone.prototype._proximityCfg = function () {
+    const r = (CFG.physics && CFG.physics.rotor) || {};
+    const p = r.proximity || {};
+    const g = p.ground || {}, w = p.wall || {}, c = p.ceiling || {};
+    return {
+      enabled: (p.enabled !== false),
+      ground: {
+        reach:      (g.reach      != null) ? g.reach      : 2.0,
+        gainMax:    (g.gainMax    != null) ? g.gainMax    : 0.28,
+        peakHeight: (g.peakHeight != null) ? g.peakHeight : 0.25,
+        recircLoss: (g.recircLoss != null) ? g.recircLoss : 0.45,
+        discLoading:(g.discLoading!= null) ? g.discLoading: 0.5
+      },
+      wall: {
+        reach: (w.reach != null) ? w.reach : 1.25,
+        gain:  (w.gain  != null) ? w.gain  : 0.06,
+        push:  (w.push  != null) ? w.push  : 0.35
+      },
+      ceiling: {
+        reach: (c.reach != null) ? c.reach : 1.0,
+        loss:  (c.loss  != null) ? c.loss  : 0.25,
+        suck:  (c.suck  != null) ? c.suck  : 0.12
+      },
+      maxPush: (p.maxPush != null) ? p.maxPush : 12
+    };
+  };
+
+  /* Extra thrust fraction for a disc `hRatio` rotor radii above a surface
+     (ground or wall). Zero at `reach`, rising as the surface gets closer
+     (~(1 - h/reach)², the shape of the source-sink ground-effect model).
+     Inside `peakHeight` the outflow has nowhere to go and recirculates, so
+     the gain rolls back toward the pad — the cushion-then-suck-down
+     transition. A slowly turning disc carries little induced velocity to
+     constrain, so `discLoading` blends the whole effect out at low RPM.
+     Exposed for tests/telemetry. */
+  Drone.prototype._groundEffectGain = function (hRatio, loadFrac, ground) {
+    const g = ground || this._proximityCfg().ground;
+    if (!(hRatio >= 0) || !(g.reach > 0)) return 0;
+    if (hRatio >= g.reach) return 0;
+    const close = 1 - hRatio / g.reach;
+    let extra = g.gainMax * close * close;
+    const peak = Math.max(1e-3, g.peakHeight);
+    if (hRatio < peak) {
+      /* Recirculation eats part of the cushion again at the pad. */
+      extra *= 1 - g.recircLoss * (1 - hRatio / peak);
+    }
+    const dl = Math.max(0, Math.min(1, g.discLoading));
+    const load = (loadFrac != null) ? Math.max(0, Math.min(1, loadFrac)) : 1;
+    return extra * ((1 - dl) + dl * load);
+  };
+
+  /* Nearest vertical surface (wall) and overhead surface (ceiling) within
+     `reach` of the airframe, from the same colliders the flight model
+     already collides with. Walls are the vertical faces of a box or the
+     side of a cylinder; the normal points away from the surface. Boxes
+     carry a rotation (cos/sin) and a vertical span `yMin..h`, and only
+     their underside is a ceiling. */
+  Drone.prototype._surfaceProximity = function (reach) {
+    const out = { wallDist: Infinity, wallNx: 0, wallNz: 0, ceilGap: Infinity };
+    const cols = this.colliders ||
+      ((typeof window !== 'undefined' && window.__world && window.__world.colliders) || null);
+    if (!cols || !cols.length) return out;
+    const px = this.position.x, py = this.position.y, pz = this.position.z;
+    /* Only nearby colliders matter; the spatial index makes that cheap. */
+    const list = (this.colliderIndex && typeof this.colliderIndex.query === 'function')
+      ? this.colliderIndex.query(px, pz)
+      : cols;
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (!c) continue;
+      const top = (c.h != null) ? c.h : Infinity;
+      const bot = (c.yMin != null) ? c.yMin : 0;
+      if (c.type === 'box') {
+        const cs = c.cos || 0, sn = c.sin || 0;
+        const dx = px - c.x, dz = pz - c.z;
+        const lx = dx * cs - dz * sn;
+        const lz = dx * sn + dz * cs;
+        const hw = (c.w || 0) * 0.5, hd = (c.d || 0) * 0.5;
+        const insideXZ = Math.abs(lx) <= hw && Math.abs(lz) <= hd;
+        /* Wall: outside the footprint, inside the vertical span. */
+        if (!insideXZ && py <= top + reach && py >= bot - reach) {
+          const ex = Math.max(Math.abs(lx) - hw, 0);
+          const ez = Math.max(Math.abs(lz) - hd, 0);
+          const d = Math.sqrt(ex * ex + ez * ez);
+          if (d <= reach && d < out.wallDist) {
+            let nlx = 0, nlz = 0;
+            if (ex >= ez) nlx = (lx >= 0) ? 1 : -1;
+            else          nlz = (lz >= 0) ? 1 : -1;
+            out.wallDist = d;
+            out.wallNx =  nlx * cs + nlz * sn;
+            out.wallNz = -nlx * sn + nlz * cs;
+          }
+        }
+        /* Ceiling: under the box's underside. */
+        const gap = bot - py;
+        if (gap > 0.01 && gap <= reach &&
+            Math.abs(lx) <= hw + reach && Math.abs(lz) <= hd + reach) {
+          if (gap < out.ceilGap) out.ceilGap = gap;
+        }
+      } else {
+        const dx = px - c.x, dz = pz - c.z;
+        const rad = Math.sqrt(dx * dx + dz * dz);
+        const d = rad - (c.r || 0);
+        if (d > 0 && d <= reach && py <= top + reach && py >= bot - reach) {
+          if (d < out.wallDist) {
+            out.wallDist = d;
+            out.wallNx = dx / Math.max(1e-4, rad);
+            out.wallNz = dz / Math.max(1e-4, rad);
+          }
+        }
+      }
+    }
+    return out;
+  };
+
   /* Thrust the motors are being asked for (N). Shared by every plant, so
      easy-mode altitude hold and acro collective are identical in all
      three physics models. */
@@ -379,6 +500,49 @@ window.Drone = (function () {
     const advOn = adv.enabled && adv.diameterM > 0;
     this._qInv.copy(this.quat).invert();
     this._bodyVel.copy(this.velocity).applyQuaternion(this._qInv);
+
+    /* Ground / wall / ceiling proximity. Ground effect is per prop (its own
+       height above the surface below it), so a tilted airframe gains more
+       thrust on its low side. Walls and ceilings are evaluated for the
+       airframe, then applied to every disc plus a body push: a disc near a
+       wall has nowhere to throw its outwash, so the reaction shoves the
+       airframe away, and a disc under a ceiling loses thrust to its
+       starved inlet while the low pressure pulls the airframe up. */
+    const prox = this._proximityCfg();
+    const proxOn = prox.enabled;
+    const Rrot = Math.max(0.01, adv.diameterM * 0.5);
+    const groundOn = proxOn && prox.ground.reach > 0;
+    let wallGain = 1, wallPush = 0, wallNx = 0, wallNz = 0;
+    let ceilFactor = 1, ceilSuck = 0;
+    const wr = proxOn ? prox.wall.reach * adv.diameterM : 0;
+    const cr = proxOn ? prox.ceiling.reach * adv.diameterM : 0;
+    /* Ground height is sampled ONCE per step, at the airframe centre: on a
+       GLB map `getFloorY` is a BVH raycast, so asking it per prop would
+       quadruple that cost for no extra information on a flat surface. Each
+       prop still uses its own height above that plane (the arm offset
+       rotated into the world), so a tilted airframe gains more on its low
+       side and sees the same low-side torque. */
+    const floorY = groundOn ? this.getFloorY(this.position.x, this.position.z) : 0;
+    /* Walls and ceilings come from the collider list, not from the ground,
+       so they stay live even when ground.reach is 0. */
+    if (wr > 1e-6 || cr > 1e-6) {
+      const reach = Math.max(wr, cr, groundOn
+        ? Rrot * prox.ground.reach + this._sphereScale * Rrot
+        : 0);
+      const sp = this._surfaceProximity(reach);
+      if (wr > 1e-6 && isFinite(sp.wallDist) && sp.wallDist < wr) {
+        const k = 1 - sp.wallDist / wr;
+        wallGain = 1 + prox.wall.gain * k * k;
+        wallPush = prox.wall.push * k * k;
+        wallNx = sp.wallNx;
+        wallNz = sp.wallNz;
+      }
+      if (cr > 1e-6 && isFinite(sp.ceilGap) && sp.ceilGap < cr) {
+        const k = 1 - sp.ceilGap / cr;
+        ceilFactor = Math.max(0, 1 - prox.ceiling.loss * k * k);
+        ceilSuck = prox.ceiling.suck * k * k;
+      }
+    }
 
     /* Body axes: X = pitch, Y = yaw, Z = roll. CFG.physics.inertia is
        documented per airframe axis, so map it onto the sim's axes. */
@@ -645,12 +809,43 @@ window.Drone = (function () {
         cqF = propCqFactor(J, adv);
       }
 
-      const T = T0 * ctF;
+      /* Ground effect for THIS prop: its height above whatever surface is
+         under it, from the arm offset rotated into the world. The low-side
+         props gain more when the airframe is tilted, which is a real torque
+         on the body, not a scripted wobble. */
+      let geF = 0;
+      if (groundOn) {
+        const off = this._tmpV.set(MX[i], 0, MZ[i]).applyQuaternion(this.quat);
+        const hAbove = Math.max(0, (this.position.y + off.y) - floorY);
+        geF = this._groundEffectGain(hAbove / Rrot, n * n, prox.ground);
+      }
+
+      const T = T0 * ctF * (1 + geF) * wallGain * ceilFactor;
       totalThrust += T;
       sumX += MX[i] * T;
       sumZ += MZ[i] * T;
       sumSpinT += SPIN[i] * T0 * cqF;
       sumSpinOmega += SPIN[i] * (this.rotorRpm[i] * Math.PI * 2 / 60);
+    }
+
+    /* Proximity push: the outwash a wall blocks reacts on the airframe, and
+       a starved inlet under a ceiling pulls it in. Both scale with the
+       thrust the discs are actually making, so an idle quad is not shoved
+       around and a punch-out near a wall is. Capped in acceleration so a
+       degenerate collider cannot fling the airframe. */
+    const proxAcc = this._proxAccel;
+    proxAcc.set(0, 0, 0);
+    if (proxOn && this.armed && maxT > 1e-6) {
+      const fPerMass = totalThrust / Math.max(1e-6, CFG.mass);
+      if (wallPush > 0) {
+        proxAcc.x += wallNx * fPerMass * wallPush;
+        proxAcc.z += wallNz * fPerMass * wallPush;
+      }
+      proxAcc.y += fPerMass * ceilSuck;
+      const pl = proxAcc.length();
+      if (pl > prox.maxPush && pl > 1e-9) {
+        proxAcc.multiplyScalar(prox.maxPush / pl);
+      }
     }
 
     /* Rigid-body torques: motor moments, prop reaction, rotor gyroscopic
@@ -1069,6 +1264,9 @@ window.Drone = (function () {
     }
     acc.copy(this._up).multiplyScalar(_thrustOut / CFG.mass);
     acc.y -= CFG.gravity;
+    /* Wall / ceiling reaction from the rotor plant (zero in the legacy
+       plants and while disarmed). */
+    if (_rotorMode) acc.add(this._proxAccel);
 
     /* ===== wind ====================================================
        Applied uniformly in both flight modes. Horizontal push makes
